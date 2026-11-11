@@ -1,0 +1,938 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>NATS from the Ground Up</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Schibsted+Grotesk:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+/* Layout: one reading column (prose held near 68ch; tables, code and diagrams use the full column) beside a sticky contents rail on wide screens */
+:root{
+  --bg:#F4F6F7;
+  --surface:#FFFFFF;
+  --ink:#15202A;
+  --muted:#56677A;
+  --rule:#D7DFE5;
+  --accent:#0A6884;
+  --accent-soft:#DFEFF4;
+  --wild:#A54D07;
+  --wild-soft:#FBEADB;
+  --code-bg:#EBF0F3;
+  --f-display:"Schibsted Grotesk","Helvetica Neue",Arial,sans-serif;
+  --f-body:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0D1419; --surface:#131D24; --ink:#E1E8ED; --muted:#93A4B2; --rule:#26353F;
+    --accent:#5DBAD5; --accent-soft:#103039; --wild:#F0A55B; --wild-soft:#36240F; --code-bg:#17232B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0D1419; --surface:#131D24; --ink:#E1E8ED; --muted:#93A4B2; --rule:#26353F;
+  --accent:#5DBAD5; --accent-soft:#103039; --wild:#F0A55B; --wild-soft:#36240F; --code-bg:#17232B;
+  color-scheme:dark;
+}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  background:var(--bg);color:var(--ink);
+  font-family:var(--f-body);font-size:17px;line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  -webkit-font-smoothing:antialiased;
+}
+.layout{
+  max-width:1140px;margin:0 auto;padding-block:56px 120px;
+  display:grid;grid-template-columns:minmax(0,1fr);gap:40px;
+  grid-template-areas:"head" "toc" "main";
+}
+@media (min-width:1080px){
+  .layout{grid-template-columns:200px minmax(0,1fr);column-gap:64px;row-gap:48px;grid-template-areas:". head" "toc main"}
+}
+.head{grid-area:head;min-width:0;max-width:780px}
+main{grid-area:main;min-width:0;max-width:780px}
+
+/* header */
+.eyebrow,.part{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(34px,5.4vw,52px);font-weight:700;letter-spacing:-.02em}
+.lede{font-size:20px;line-height:1.55;color:var(--ink);max-width:62ch;margin:18px 0 0}
+.meta{display:flex;flex-wrap:wrap;gap:12px 32px;margin:24px 0 0;padding:16px 0 0;border-top:1px solid var(--rule);font-family:var(--f-display);font-size:14px}
+.meta div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.meta dt{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.meta dd{margin:0}
+
+/* contents */
+.toc{grid-area:toc;font-family:var(--f-display);font-size:14.5px;min-width:0}
+.toc p{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.toc a{display:flex;gap:10px;padding:5px 8px;margin-left:-8px;border-radius:6px;color:var(--muted);text-decoration:none;line-height:1.3}
+.toc a span{font-family:var(--f-mono);font-size:12px;min-width:1.6em;color:var(--muted);padding-top:1px}
+.toc a:hover{color:var(--ink);background:var(--surface)}
+.toc a.on{color:var(--accent);font-weight:600}
+.toc a.on span{color:var(--accent)}
+@media (max-width:1079px){
+  .toc{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:16px 18px}
+  .toc ol{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));column-gap:16px}
+}
+@media (min-width:1080px){
+  .toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 28px);align-self:start}
+}
+
+/* sections */
+main > section{padding-top:56px;margin-top:56px;border-top:1px solid var(--rule)}
+main > section:first-child{margin-top:0;padding-top:0;border-top:0}
+h2{font-size:clamp(26px,3.4vw,32px);font-weight:700;letter-spacing:-.01em;margin-bottom:18px}
+h3{font-size:21px;font-weight:600;margin:40px 0 12px}
+p,ul,ol.steps{max-width:68ch}
+p{margin:0 0 16px}
+ul,ol.steps{margin:0 0 18px;padding-left:1.3em}
+li{margin:0 0 8px}
+li::marker{color:var(--muted)}
+strong{font-weight:600}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+
+/* inline code and subjects */
+code{font-family:var(--f-mono);font-size:.84em;background:var(--code-bg);padding:.12em .36em;border-radius:4px;white-space:nowrap}
+.w{color:var(--wild);font-weight:600}
+
+/* code blocks */
+pre{font-family:var(--f-mono);font-size:13.5px;line-height:1.6;background:var(--code-bg);border:1px solid var(--rule);border-radius:10px;padding:14px 16px;margin:0 0 20px;overflow-x:auto;tab-size:4}
+pre code{background:none;padding:0;font-size:inherit;white-space:pre}
+.c{color:var(--muted)}
+.k{color:var(--accent);font-weight:600}
+
+/* tables */
+.tw{overflow-x:auto;margin:0 0 22px;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-family:var(--f-display);font-size:15px;line-height:1.45}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;font-family:var(--f-mono);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--bg)}
+tr:last-child td{border-bottom:0}
+td:first-child{white-space:nowrap;font-weight:600}
+td code{white-space:nowrap}
+.tw.free td:first-child{white-space:normal}
+.num{font-variant-numeric:tabular-nums}
+
+/* question blocks */
+.qa{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:20px 22px 8px;margin:28px 0;scroll-margin-top:24px}
+.qa-label{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
+.qa-q{font-family:var(--f-display);font-size:18.5px;font-weight:600;line-height:1.4;margin:0 0 12px;max-width:none}
+.qa-a > :last-child{margin-bottom:12px}
+
+/* definition and gotcha boxes */
+.def,.note{border-radius:12px;padding:18px 22px 4px;margin:24px 0}
+.def{background:var(--accent-soft)}
+.note{background:var(--wild-soft)}
+.box-label{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px}
+.def .box-label{color:var(--accent)}
+.note .box-label{color:var(--wild)}
+
+/* figures */
+.fig{margin:28px 0}
+.fig-scroll{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:16px}
+.fig svg{display:block;width:100%;min-width:640px;height:auto;color:var(--ink)}
+figcaption{font-family:var(--f-display);font-size:14px;line-height:1.5;color:var(--muted);margin-top:10px;max-width:72ch}
+.d-box{fill:var(--bg);stroke:var(--rule);stroke-width:1.2}
+.d-row{fill:var(--surface);stroke:var(--rule)}
+.d-hot{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.4}
+.d-dim{fill:none;stroke:var(--rule);stroke-width:1.2;stroke-dasharray:4 3}
+.d-area{fill:none;stroke:var(--rule);stroke-width:1.2}
+.d-t{font-family:var(--f-display);font-size:13px;fill:var(--ink)}
+.d-b{font-weight:700;font-size:14px}
+.d-sm{font-size:12px;fill:var(--muted)}
+.d-mute{fill:var(--muted)}
+.d-m{font-family:var(--f-mono);font-size:11.5px;fill:var(--muted)}
+.d-ink{fill:var(--ink)}
+.d-cap{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;fill:var(--muted)}
+.d-l{stroke:var(--muted);stroke-width:1.5;fill:none}
+.d-la{stroke:var(--accent);stroke-width:1.8;fill:none}
+.d-ah{fill:var(--muted)}
+.d-aha{fill:var(--accent)}
+.d-guide{stroke:var(--rule);stroke-width:1;stroke-dasharray:2 4}
+.d-dot{fill:var(--accent)}
+.d-ring{fill:var(--surface);stroke:var(--accent);stroke-width:2}
+.d-next{fill:none;stroke:var(--accent);stroke-width:1.5;stroke-dasharray:3 2}
+
+/* closing summary */
+.model{counter-reset:m;list-style:none;padding:0;margin:0 0 24px;display:grid;gap:10px;max-width:68ch}
+.model li{counter-increment:m;display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;margin:0}
+.model li::before{content:counter(m);font-family:var(--f-mono);font-size:13px;color:var(--accent);padding-top:3px}
+.qlist{max-width:68ch}
+.qlist li{margin-bottom:10px}
+.foot{margin-top:64px;padding-top:16px;border-top:1px solid var(--rule);font-family:var(--f-display);font-size:13.5px;color:var(--muted)}
+
+@media (max-width:600px){
+  body{font-size:16.5px}
+  .lede{font-size:18px}
+  .qa{padding:16px 16px 6px}
+  .def,.note{padding:16px 16px 4px}
+  .fig-scroll{padding:10px}
+}
+</style>
+
+<div class="layout">
+
+<header class="head">
+  <p class="eyebrow">Tech doc · NATS 2.x</p>
+  <h1>NATS from the Ground Up</h1>
+  <p class="lede">A tutorial to read from top to bottom. It starts with the entities of core NATS, follows one example (an orders system) through core NATS and then JetStream, and ends with how servers connect and how tenants are kept apart.</p>
+  <dl class="meta">
+    <div><dt>Assumes</dt><dd>You know message queues and Kafka</dd></div>
+    <div><dt>Code</dt><dd>Go, with <code>nats.go</code> and its <code>jetstream</code> package</dd></div>
+    <div><dt>Running example</dt><dd><code>orders.created</code>, <code>orders.dispatched</code></dd></div>
+  </dl>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#layers"><span>1</span>Two layers in one server</a></li>
+    <li><a href="#core"><span>2</span>Core NATS entities</a></li>
+    <li><a href="#example"><span>3</span>Worked example: orders</a></li>
+    <li><a href="#internals"><span>4</span>Inside the server: fan-out</a></li>
+    <li><a href="#to-jetstream"><span>5</span>From core NATS to JetStream</a></li>
+    <li><a href="#streams"><span>6</span>Streams</a></li>
+    <li><a href="#consumers"><span>7</span>Consumers</a></li>
+    <li><a href="#topology"><span>8</span>Topology</a></li>
+    <li><a href="#security"><span>9</span>Security and accounts</a></li>
+    <li><a href="#summary"><span>10</span>The model, and all questions</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ============ PART 1 ============ -->
+<section id="layers">
+  <p class="part">Part 1</p>
+  <h2>Two layers in one server</h2>
+  <p>NATS is a single server binary, <code>nats-server</code>, that gives you two things.</p>
+  <ul>
+    <li><strong>Core NATS</strong> routes each message to whoever is subscribed at that moment. It stores nothing. If nobody is listening when a message is published, the message is gone. Delivery is <em>at-most-once</em>.</li>
+    <li><strong>JetStream</strong> is a persistence layer built into the same server. It stores messages in <em>streams</em> and lets applications read them later through <em>consumers</em>, at their own pace, with acks and redelivery. Delivery is <em>at-least-once</em>. Exactly-once processing is possible by combining publish deduplication with double acks.</li>
+  </ul>
+  <p>JetStream is switched on per server, with the <code>-js</code> flag or a <code>jetstream {}</code> block in the server config. It runs on top of core NATS: even its management API is request/reply on subjects under <code>$JS.API.&gt;</code>. Everything you learn about core NATS stays true inside JetStream, so learn core NATS first.</p>
+
+  <h3>If you know Kafka</h3>
+  <p>Kafka uses one concept, the topic, for both the address of a message and the log that stores it. NATS splits these apart. That split is the main thing to unlearn.</p>
+  <div class="tw free">
+    <table>
+      <thead><tr><th>Kafka</th><th>NATS</th><th>The difference that matters</th></tr></thead>
+      <tbody>
+        <tr><td>Broker</td><td><code>nats-server</code></td><td>Clustering and replication are built into the one binary. JetStream replicates with its own Raft groups.</td></tr>
+        <tr><td>Topic</td><td><strong>Subject</strong> for addressing, <strong>stream</strong> for storage</td><td>Subjects are free-form addresses that are never created. A stream is a log that captures one or more subjects.</td></tr>
+        <tr><td>Partition</td><td>No equivalent</td><td>A stream is one ordered log. Parallel reading comes from many clients sharing one consumer, not from partitions.</td></tr>
+        <tr><td>Consumer group with committed offsets</td><td>Durable consumer</td><td>The server tracks acks per message and redelivers the ones that were not acked, like a queue. Kafka tracks one offset per partition.</td></tr>
+        <tr><td>Retention by time or size</td><td>Stream limits</td><td>Same idea: <code>MaxAge</code>, <code>MaxBytes</code>, <code>MaxMsgs</code>.</td></tr>
+        <tr><td>Log compaction</td><td><code>MaxMsgsPerSubject: 1</code></td><td>Keeps only the latest message per subject. The key-value store is built this way.</td></tr>
+        <tr><td>(none)</td><td>Core NATS pub/sub</td><td>Routing with no log at all. Kafka has no mode like this.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ PART 2 ============ -->
+<section id="core">
+  <p class="part">Part 2</p>
+  <h2>Core NATS entities</h2>
+  <p>These are the nouns of core NATS. Everything later in this doc, JetStream included, is built from them.</p>
+  <div class="tw free">
+    <table>
+      <thead><tr><th>Entity</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr><td>Server</td><td>The process that accepts client connections and routes messages between them. In core NATS it keeps no messages, only a table of which connection is subscribed to what.</td></tr>
+        <tr><td>Connection</td><td>One client's long-lived TCP (or WebSocket) connection to a server. One connection can publish and subscribe at the same time.</td></tr>
+        <tr><td>Subject</td><td>The address of a message, such as <code>orders.created</code>. Tokens separated by dots. Never created or declared.</td></tr>
+        <tr><td>Message</td><td>A subject, a payload of bytes, optional headers and an optional reply subject.</td></tr>
+        <tr><td>Publisher</td><td>Any connection that sends a message to a subject.</td></tr>
+        <tr><td>Subscription</td><td>A connection's registered interest in a subject pattern, optionally with a queue group name. The server delivers every matching message to it.</td></tr>
+        <tr><td>Queue group</td><td>A name shared by several subscriptions. Each message goes to only one member of the group.</td></tr>
+        <tr><td>Request/reply</td><td>A pattern rather than an entity. The request carries a reply subject (an inbox such as <code>_INBOX.k3J9</code>), and the responder publishes its answer there.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="subjects">Subjects and wildcards</h3>
+  <p>A subject is a string of tokens separated by dots. It is case-sensitive. You don't create subjects: one exists as soon as somebody publishes to it or subscribes to it.</p>
+  <p>Subscriptions can use two wildcards. Published subjects can't contain them.</p>
+  <ul>
+    <li><code><span class="w">*</span></code> matches exactly one token.</li>
+    <li><code><span class="w">&gt;</span></code> matches one or more tokens, and only as the last token.</li>
+  </ul>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Pattern</th><th>Matches</th><th>Does not match</th></tr></thead>
+      <tbody>
+        <tr><td><code>orders.<span class="w">*</span></code></td><td><code>orders.created</code><br><code>orders.dispatched</code></td><td><code>orders</code><br><code>orders.eu.created</code></td></tr>
+        <tr><td><code>orders.<span class="w">&gt;</span></code></td><td><code>orders.created</code><br><code>orders.eu.created</code></td><td><code>orders</code></td></tr>
+        <tr><td><code>orders.<span class="w">*</span>.created</code></td><td><code>orders.eu.created</code><br><code>orders.us.created</code></td><td><code>orders.created</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Subjects starting with <code>$</code> are used by the system: <code>$JS.</code> for JetStream, <code>$KV.</code> for the key-value store, <code>$SYS.</code> for server events. Reply inboxes start with <code>_INBOX.</code> by convention. Keep your own subjects away from these prefixes.</p>
+  <div class="note">
+    <p class="box-label">Gotcha</p>
+    <p>The hierarchy has to be consistent. <code>orders.<span class="w">*</span></code> does not match <code>order.created</code>, because the first token is <code>order</code>, not <code>orders</code>. Put the most general token first, so that one subscriber can take <code>orders.<span class="w">&gt;</span></code> and another only <code>orders.<span class="w">*</span>.created</code>.</p>
+  </div>
+
+  <h3 id="messages">Messages, seen on the wire</h3>
+  <p>A message has a subject, a payload (up to 1 MB by default, set by <code>max_payload</code>), optional headers and an optional reply subject. The client protocol is plain text, which makes the core model easy to see:</p>
+<pre><code><span class="c"># subscriber's connection → server</span>
+SUB orders.* billing 7           <span class="c">subject, queue group, subscription id</span>
+
+<span class="c"># publisher's connection → server</span>
+PUB orders.created 11            <span class="c">subject, payload size in bytes</span>
+{"id":1001}
+
+<span class="c"># server → subscriber's connection</span>
+MSG orders.created 7 11          <span class="c">subject, subscription id, size</span>
+{"id":1001}</code></pre>
+  <p>There is no queue in this exchange. <code>billing</code> is just an argument on <code>SUB</code>. Hold on to that; it explains Part 4.</p>
+
+  <h3 id="queue-groups">Subscriptions and queue groups</h3>
+  <p>When several plain subscriptions match a subject, each one gets its own copy of every message. This is fan-out.</p>
+  <p>When several subscriptions share a queue group name, each message goes to just one of them. This is load balancing. Queue groups need no setup: a group exists while it has members. To scale up, start another process with the same queue name.</p>
+  <p>You can mix both on one subject. Each queue group counts as one receiver, alongside every plain subscription.</p>
+<pre><code>nc, _ := nats.Connect(nats.DefaultURL)
+
+nc.Subscribe("orders.*", logHandler)                    <span class="c">// gets every message</span>
+nc.QueueSubscribe("orders.*", "billing", billHandler)   <span class="c">// one "billing" member per message</span></code></pre>
+
+  <aside class="qa" id="q-subjects">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">What do subscribers subscribe to: queues or subjects?</p>
+    <div class="qa-a">
+      <p>Subjects. Core NATS has no queue object you can subscribe to. A queue group is an optional name you attach to a subscription on a subject. Subscriptions on the same subject with the same queue name share the messages; subscriptions without a queue name each get a copy.</p>
+    </div>
+  </aside>
+
+  <h3 id="request-reply">Request/reply</h3>
+  <p>Request/reply is RPC built from pub/sub. The requester creates a unique inbox subject, subscribes to it, and publishes the request with that inbox as its reply subject. The responder publishes the answer to the inbox. Responders in a queue group become a load-balanced service.</p>
+<pre><code><span class="c">// responder: run as many as you like</span>
+nc.QueueSubscribe("orders.lookup", "order-svc", func(m *nats.Msg) {
+    m.Respond([]byte(`{"status":"dispatched"}`))
+})
+
+<span class="c">// requester</span>
+resp, err := nc.Request("orders.lookup", []byte(`{"id":1001}`), 2*time.Second)</code></pre>
+  <p>If nobody is subscribed to <code>orders.lookup</code>, the server answers at once with a "no responders" status (<code>nats.ErrNoResponders</code> in Go) instead of letting the request time out.</p>
+
+  <h3 id="core-guarantees">What core NATS promises, and what it doesn't</h3>
+  <ul>
+    <li><strong>At-most-once.</strong> No storage, no acks, no redelivery.</li>
+    <li><strong>Nobody listening means the message is dropped.</strong> A subscriber that is offline for one second misses everything published in that second.</li>
+    <li><strong>Order per publisher.</strong> Messages from one publisher reach each subscriber in the order they were published. There is no ordering across different publishers.</li>
+    <li><strong>Publishers are never slowed down by subscribers.</strong> A subscriber that can't keep up gets disconnected instead. Part 4 shows why.</li>
+  </ul>
+</section>
+
+<!-- ============ PART 3 ============ -->
+<section id="example">
+  <p class="part">Part 3</p>
+  <h2>Worked example: an orders system</h2>
+  <p>An order service publishes two events. Two teams consume them: billing runs three instances, analytics runs two. An audit logger wants every message.</p>
+<pre><code><span class="c">// order service</span>
+nc.Publish("orders.created", data)
+nc.Publish("orders.dispatched", data)
+
+<span class="c">// billing: run 3 processes</span>
+nc.QueueSubscribe("orders.*", "billing", handle)
+
+<span class="c">// analytics: run 2 processes</span>
+nc.QueueSubscribe("orders.*", "analytics", handle)
+
+<span class="c">// audit log: a plain subscription</span>
+nc.Subscribe("orders.&gt;", audit)</code></pre>
+  <p>When <code>orders.created</code> is published:</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Subscriber</th><th>Gets the message?</th></tr></thead>
+      <tbody>
+        <tr><td>billing (3 instances)</td><td>Yes, exactly one of the three instances</td></tr>
+        <tr><td>analytics (2 instances)</td><td>Yes, exactly one of the two instances</td></tr>
+        <tr><td>audit (plain)</td><td>Yes</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>That is three deliveries for one publish. Inside a handler, <code>msg.Subject</code> tells you which event arrived.</p>
+
+  <aside class="qa" id="q-orders">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">We can have subjects <code>orders.created</code> and <code>orders.dispatched</code> and publish to them, right? Can a set of workers listen to <code>orders.*</code>? What about two subscriber groups on <code>orders.*</code>?</p>
+    <div class="qa-a">
+      <p>Yes to all three. Subjects need no setup, so you just publish. One queue group on <code>orders.*</code> gives you a pool of workers that share the load. Two queue groups with different names on <code>orders.*</code> each get every message, and inside each group one member handles it.</p>
+    </div>
+  </aside>
+
+  <p>This design has one weakness. If all three billing instances are down when an order is created, billing never sees that order. Nothing stored it, and nothing will retry it. Keep that in mind; it is the reason JetStream exists (Part 5).</p>
+</section>
+
+<!-- ============ PART 4 ============ -->
+<section id="internals">
+  <p class="part">Part 4</p>
+  <h2>Inside the server: how fan-out works</h2>
+
+  <aside class="qa" id="q-fanout">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">How is this fan-out handled inside NATS? It seems there must be a queue for "billing" and one for "analytics". And when an event reaches the servers, do they duplicate the message?</p>
+    <div class="qa-a">
+      <p>There is no queue for either group, and nothing is stored. The server keeps a table of subscriptions. When a message arrives, it looks up the matching subscriptions, picks one member of each queue group, and writes the bytes into the outbound buffer of each chosen connection. That write, once per recipient, is the only duplication.</p>
+    </div>
+  </aside>
+
+  <h3>The interest table</h3>
+  <p>Each server keeps a subject-token tree of subscriptions, called the sublist. For our example it holds:</p>
+<pre><code>orders.*  →  queue billing:    [conn 11, conn 12, conn 13]
+             queue analytics:  [conn 21, conn 22]
+orders.&gt;  →  plain:            [conn 31]</code></pre>
+  <p>Subscribing adds an entry. Unsubscribing or disconnecting removes it. Lookups for a literal subject are cached, so repeated subjects are cheap. That table is the whole state of core NATS.</p>
+
+  <h3>One publish, step by step</h3>
+  <ol class="steps">
+    <li>The server reads <code>PUB orders.created</code>.</li>
+    <li>It matches the subject against the table. Both <code>orders.*</code> and <code>orders.&gt;</code> match, which gives one plain subscription and two queue groups.</li>
+    <li>It picks one member of each queue group at random. In a cluster it prefers members connected to itself.</li>
+    <li>It appends the message to the outbound buffer of each chosen connection, and a writer flushes each buffer to its socket.</li>
+  </ol>
+
+  <figure class="fig" id="fig-core">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 290" role="img" aria-label="One publish to orders.created becomes three deliveries: one billing member, one analytics member and the audit subscriber. The server holds only an interest table, no queues.">
+        <defs>
+          <marker id="m1-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="d-ah"/></marker>
+          <marker id="m1-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="d-aha"/></marker>
+        </defs>
+        <!-- publisher -->
+        <rect x="16" y="126" width="130" height="58" rx="8" class="d-box"/>
+        <text x="81" y="151" class="d-t" text-anchor="middle">order service</text>
+        <text x="81" y="170" class="d-m" text-anchor="middle">publisher</text>
+        <line x1="146" y1="155" x2="198" y2="155" class="d-l" marker-end="url(#m1-mute)"/>
+        <text x="172" y="146" class="d-m" text-anchor="middle">PUB</text>
+        <!-- server -->
+        <rect x="200" y="20" width="260" height="256" rx="12" class="d-box"/>
+        <text x="330" y="46" class="d-t d-b" text-anchor="middle">nats-server</text>
+        <text x="216" y="74" class="d-cap">INTEREST TABLE</text>
+        <rect x="214" y="84" width="232" height="28" rx="5" class="d-row"/>
+        <text x="224" y="102" class="d-m d-ink">orders.*</text>
+        <text x="436" y="102" class="d-m" text-anchor="end">queue billing ×3</text>
+        <rect x="214" y="118" width="232" height="28" rx="5" class="d-row"/>
+        <text x="224" y="136" class="d-m d-ink">orders.*</text>
+        <text x="436" y="136" class="d-m" text-anchor="end">queue analytics ×2</text>
+        <rect x="214" y="152" width="232" height="28" rx="5" class="d-row"/>
+        <text x="224" y="170" class="d-m d-ink">orders.&gt;</text>
+        <text x="436" y="170" class="d-m" text-anchor="end">plain ×1</text>
+        <text x="330" y="210" class="d-t d-sm" text-anchor="middle">1  match the subject</text>
+        <text x="330" y="230" class="d-t d-sm" text-anchor="middle">2  pick one per queue group</text>
+        <text x="330" y="250" class="d-t d-sm" text-anchor="middle">3  write to each chosen connection</text>
+        <!-- billing -->
+        <text x="560" y="26" class="d-cap">QUEUE GROUP billing</text>
+        <rect x="560" y="34" width="180" height="26" rx="6" class="d-dim"/>
+        <text x="650" y="51" class="d-t d-mute" text-anchor="middle">billing-1</text>
+        <rect x="560" y="66" width="180" height="26" rx="6" class="d-hot"/>
+        <text x="650" y="83" class="d-t" text-anchor="middle">billing-2</text>
+        <rect x="560" y="98" width="180" height="26" rx="6" class="d-dim"/>
+        <text x="650" y="115" class="d-t d-mute" text-anchor="middle">billing-3</text>
+        <!-- analytics -->
+        <text x="560" y="150" class="d-cap">QUEUE GROUP analytics</text>
+        <rect x="560" y="158" width="180" height="26" rx="6" class="d-hot"/>
+        <text x="650" y="175" class="d-t" text-anchor="middle">analytics-1</text>
+        <rect x="560" y="190" width="180" height="26" rx="6" class="d-dim"/>
+        <text x="650" y="207" class="d-t d-mute" text-anchor="middle">analytics-2</text>
+        <!-- audit -->
+        <text x="560" y="242" class="d-cap">PLAIN SUBSCRIPTION</text>
+        <rect x="560" y="250" width="180" height="26" rx="6" class="d-hot"/>
+        <text x="650" y="267" class="d-t" text-anchor="middle">audit</text>
+        <!-- deliveries -->
+        <line x1="460" y1="79" x2="557" y2="79" class="d-la" marker-end="url(#m1-acc)"/>
+        <text x="508" y="72" class="d-m" text-anchor="middle">MSG</text>
+        <line x1="460" y1="171" x2="557" y2="171" class="d-la" marker-end="url(#m1-acc)"/>
+        <text x="508" y="164" class="d-m" text-anchor="middle">MSG</text>
+        <line x1="460" y1="263" x2="557" y2="263" class="d-la" marker-end="url(#m1-acc)"/>
+        <text x="508" y="256" class="d-m" text-anchor="middle">MSG</text>
+      </svg>
+    </div>
+    <figcaption>One publish becomes three deliveries. The dashed instances get nothing this time; the next message may pick a different member. No queue for billing or analytics exists anywhere.</figcaption>
+  </figure>
+
+  <h3>The only buffer is per connection</h3>
+  <p>Each connection has an outbound buffer, and that is the closest thing to a queue in core NATS. If a subscriber reads too slowly, its buffer grows. Once it passes a limit (<code>max_pending</code>, 64 MB by default), the server marks it a <em>slow consumer</em> and closes the connection. The publisher is never made to wait. Client libraries also keep a pending limit per subscription and drop messages, with a slow-consumer error, when it fills.</p>
+
+  <h3>In a cluster</h3>
+  <ul>
+    <li>Servers share their interest tables with each other over <em>routes</em>.</li>
+    <li>A message crosses a route at most once per remote server, however many subscribers live there. The remote server then does its own local fan-out.</li>
+    <li>For queue groups, the origin server prefers a local member. If it has none, it forwards the message to a server that has members, tagged with the queue groups it is meant for, and that server picks the member.</li>
+  </ul>
+</section>
+
+<!-- ============ PART 5 ============ -->
+<section id="to-jetstream">
+  <p class="part">Part 5</p>
+  <h2>From core NATS to JetStream</h2>
+  <p>Part 3 ended with a gap: a group that is offline misses messages, and a failed handler never gets a retry. JetStream closes that gap by storing messages and tracking who has processed them.</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th></th><th>Core NATS</th><th>JetStream</th></tr></thead>
+      <tbody>
+        <tr><td>Storage</td><td>None</td><td>Messages kept in a stream, on disk or in memory</td></tr>
+        <tr><td>Delivery</td><td>At-most-once</td><td>At-least-once; exactly-once with dedup and double acks</td></tr>
+        <tr><td>Acks and retries</td><td>None</td><td>Per message; unacked messages are redelivered</td></tr>
+        <tr><td>Replay</td><td>Impossible</td><td>From any sequence number or time</td></tr>
+        <tr><td>Offline groups</td><td>Miss messages</td><td>Catch up when they return</td></tr>
+        <tr><td>Flow control</td><td>Slow subscribers get disconnected</td><td>Clients pull at their own rate; capped by <code>MaxAckPending</code></td></tr>
+        <tr><td>Your app attaches to</td><td>A subject, through a subscription</td><td>A consumer, which belongs to a stream</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="def">
+    <p class="box-label">The shift to make</p>
+    <p>In core NATS, an application subscribes to subjects. In JetStream, a <strong>stream</strong> captures subjects and stores the messages, and an application reads through a <strong>consumer</strong> on that stream. Subjects still decide what a stream stores and which stored messages a consumer visits. They are no longer what your application attaches to.</p>
+  </div>
+
+  <h3>JetStream entities</h3>
+  <div class="tw free">
+    <table>
+      <thead><tr><th>Entity</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr><td>Stream</td><td>A stored, ordered log of messages. It captures every message published to its subjects, numbers them, and keeps them according to its retention policy. Belongs to one account.</td></tr>
+        <tr><td>Stream sequence</td><td>A message's position in the stream: 1, 2, 3 and so on. Never reused. Every consumer sees the same sequence for the same message.</td></tr>
+        <tr><td>Consumer</td><td>Server-side state attached to exactly one stream: a filter, a starting point, a position, and ack bookkeeping. A view or cursor over the stream. Applications read through it.</td></tr>
+        <tr><td>Ack</td><td>The application's confirmation that a delivered message was processed. Until it arrives, the message counts as pending and can be redelivered.</td></tr>
+        <tr><td>PubAck</td><td>The server's confirmation to a publisher that a message was stored, with the stream name and sequence number.</td></tr>
+        <tr><td>Key-value store</td><td>A bucket of keys with history and watch, implemented as a stream.</td></tr>
+        <tr><td>Object store</td><td>Large files split into chunks, implemented as a stream.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure class="fig" id="fig-stream">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 340" role="img" aria-label="Stream ORDERS stores seven messages once, with sequence numbers. Consumer billing filters on orders.created and visits only sequences 1, 3, 4 and 6. Consumer analytics visits all seven. Each tracks its own acks and position.">
+        <defs>
+          <marker id="m2-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="d-ah"/></marker>
+        </defs>
+        <!-- publisher -->
+        <rect x="16" y="18" width="160" height="40" rx="8" class="d-box"/>
+        <text x="96" y="43" class="d-t" text-anchor="middle">order service</text>
+        <path d="M176 38 H688 V93" class="d-l" marker-end="url(#m2-mute)"/>
+        <text x="432" y="30" class="d-m" text-anchor="middle">publish orders.dispatched → stored as seq 7</text>
+        <!-- stream label -->
+        <text x="16" y="116" class="d-t d-b">stream ORDERS</text>
+        <text x="16" y="134" class="d-m">subjects orders.&gt;</text>
+        <!-- guides -->
+        <line x1="232" y1="152" x2="232" y2="280" class="d-guide"/>
+        <line x1="308" y1="152" x2="308" y2="280" class="d-guide"/>
+        <line x1="384" y1="152" x2="384" y2="280" class="d-guide"/>
+        <line x1="460" y1="152" x2="460" y2="280" class="d-guide"/>
+        <line x1="536" y1="152" x2="536" y2="280" class="d-guide"/>
+        <line x1="612" y1="152" x2="612" y2="280" class="d-guide"/>
+        <line x1="688" y1="152" x2="688" y2="280" class="d-guide"/>
+        <!-- log cells -->
+        <rect x="196" y="96" width="72" height="56" rx="6" class="d-row"/>
+        <text x="232" y="118" class="d-m d-ink" text-anchor="middle">1</text>
+        <text x="232" y="138" class="d-m" text-anchor="middle">created</text>
+        <rect x="272" y="96" width="72" height="56" rx="6" class="d-row"/>
+        <text x="308" y="118" class="d-m d-ink" text-anchor="middle">2</text>
+        <text x="308" y="138" class="d-m" text-anchor="middle">dispatched</text>
+        <rect x="348" y="96" width="72" height="56" rx="6" class="d-row"/>
+        <text x="384" y="118" class="d-m d-ink" text-anchor="middle">3</text>
+        <text x="384" y="138" class="d-m" text-anchor="middle">created</text>
+        <rect x="424" y="96" width="72" height="56" rx="6" class="d-row"/>
+        <text x="460" y="118" class="d-m d-ink" text-anchor="middle">4</text>
+        <text x="460" y="138" class="d-m" text-anchor="middle">created</text>
+        <rect x="500" y="96" width="72" height="56" rx="6" class="d-row"/>
+        <text x="536" y="118" class="d-m d-ink" text-anchor="middle">5</text>
+        <text x="536" y="138" class="d-m" text-anchor="middle">dispatched</text>
+        <rect x="576" y="96" width="72" height="56" rx="6" class="d-row"/>
+        <text x="612" y="118" class="d-m d-ink" text-anchor="middle">6</text>
+        <text x="612" y="138" class="d-m" text-anchor="middle">created</text>
+        <rect x="652" y="96" width="72" height="56" rx="6" class="d-hot"/>
+        <text x="688" y="118" class="d-m d-ink" text-anchor="middle">7</text>
+        <text x="688" y="138" class="d-m" text-anchor="middle">dispatched</text>
+        <!-- consumer billing -->
+        <text x="16" y="196" class="d-t d-b">consumer billing</text>
+        <text x="16" y="214" class="d-m">filter orders.created</text>
+        <circle cx="232" cy="203" r="7" class="d-dot"/>
+        <circle cx="384" cy="203" r="7" class="d-dot"/>
+        <circle cx="460" cy="203" r="7" class="d-ring"/>
+        <circle cx="612" cy="203" r="7" class="d-next"/>
+        <!-- consumer analytics -->
+        <text x="16" y="258" class="d-t d-b">consumer analytics</text>
+        <text x="16" y="276" class="d-m">filter orders.&gt;</text>
+        <circle cx="232" cy="265" r="7" class="d-dot"/>
+        <circle cx="308" cy="265" r="7" class="d-dot"/>
+        <circle cx="384" cy="265" r="7" class="d-dot"/>
+        <circle cx="460" cy="265" r="7" class="d-dot"/>
+        <circle cx="536" cy="265" r="7" class="d-dot"/>
+        <circle cx="612" cy="265" r="7" class="d-ring"/>
+        <circle cx="688" cy="265" r="7" class="d-next"/>
+        <!-- legend -->
+        <circle cx="23" cy="318" r="6" class="d-dot"/>
+        <text x="36" y="322" class="d-t d-sm">acked</text>
+        <circle cx="103" cy="318" r="6" class="d-ring"/>
+        <text x="116" y="322" class="d-t d-sm">delivered, waiting for ack</text>
+        <circle cx="303" cy="318" r="6" class="d-next"/>
+        <text x="316" y="322" class="d-t d-sm">next to deliver</text>
+        <text x="440" y="322" class="d-t d-sm">no mark: skipped by the filter</text>
+      </svg>
+    </div>
+    <figcaption>One stream holds one copy of each message. Each consumer is a separate cursor over it: billing's filter skips the dispatched messages (2, 5, 7), analytics visits all of them, and each keeps its own acks and position.</figcaption>
+  </figure>
+</section>
+
+<!-- ============ PART 6 ============ -->
+<section id="streams">
+  <p class="part">Part 6</p>
+  <h2>Streams</h2>
+  <p>A stream is created explicitly, with a name and the list of subjects it captures. From then on, every message published to one of those subjects is stored, whoever publishes it.</p>
+<pre><code>js, _ := jetstream.New(nc)
+
+stream, _ := js.CreateStream(ctx, jetstream.StreamConfig{
+    Name:      "ORDERS",
+    Subjects:  []string{"orders.&gt;"},     <span class="c">// what this stream captures</span>
+    Storage:   jetstream.FileStorage,    <span class="c">// or MemoryStorage</span>
+    Replicas:  3,                        <span class="c">// copies across a cluster, 1 to 5</span>
+    Retention: jetstream.LimitsPolicy,   <span class="c">// the default</span>
+    MaxAge:    7 * 24 * time.Hour,
+})</code></pre>
+
+  <h3>Publishing into a stream</h3>
+  <p>Publishers still publish to subjects. A plain core <code>nc.Publish("orders.created", …)</code> gets stored too, but the publisher has no way to know whether it was. <code>js.Publish</code> waits for the PubAck:</p>
+<pre><code>ack, err := js.Publish(ctx, "orders.created", data)
+<span class="c">// ack.Stream == "ORDERS", ack.Sequence == 42</span>
+
+<span class="c">// deduplication: same ID inside the stream's Duplicates window (2 minutes by default) is stored once</span>
+ack, err = js.Publish(ctx, "orders.created", data, jetstream.WithMsgID("order-1001-created"))
+<span class="c">// a repeat returns ack.Duplicate == true</span></code></pre>
+
+  <h3 id="retention">Retention: when messages leave a stream</h3>
+  <div class="tw free">
+    <table>
+      <thead><tr><th>Policy</th><th>A message is removed when</th><th>Typical use</th></tr></thead>
+      <tbody>
+        <tr><td>Limits (default)</td><td>A limit is reached: <code>MaxAge</code>, <code>MaxBytes</code>, <code>MaxMsgs</code> or <code>MaxMsgsPerSubject</code></td><td>Event log with replay and several independent readers</td></tr>
+        <tr><td>Interest</td><td>Every consumer whose filter matches it has acked it, or a limit is reached</td><td>Fan-out where storage should shrink as readers finish</td></tr>
+        <tr><td>WorkQueue</td><td>One consumer acks it, or a limit is reached</td><td>A job queue: each message processed once</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>When a stream hits a limit, its discard policy decides what happens: <code>DiscardOld</code> (the default) deletes the oldest messages, <code>DiscardNew</code> rejects new publishes.</p>
+
+  <h3 id="one-stream">A subject belongs to one stream</h3>
+  <p>Within an account, a subject can be captured by only one stream. Creating a stream whose subjects overlap an existing stream's subjects fails with <code>subjects overlap with an existing stream</code>. So a published message always lands in exactly one stream, or in none.</p>
+
+  <aside class="qa" id="q-overlap">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">Say I have three subjects, <code>orders.A</code>, <code>orders.B</code> and <code>orders.C</code>. I could create 2³ streams from their combinations. Does a message on <code>orders.A</code> get duplicated into every stream that includes it?</p>
+    <div class="qa-a">
+      <p>No, because JetStream won't let you create those streams. Once one stream has <code>orders.A</code>, no other stream can take <code>orders.A</code>, <code>orders.*</code> or <code>orders.&gt;</code>. Your only options are splits where no subject appears twice: one stream on <code>orders.&gt;</code>, three streams with one subject each, or <code>{orders.A, orders.B}</code> plus <code>{orders.C}</code>. Either way, a message on <code>orders.A</code> is stored in exactly one stream.</p>
+    </div>
+  </aside>
+
+  <h3 id="mirrors">Copying between streams: mirrors and sources</h3>
+  <p>If you do want the same message in several streams, you ask for the copy explicitly. Both of these store real copies.</p>
+  <ul>
+    <li><strong>Mirror:</strong> a read-only copy of exactly one other stream. It has no subjects of its own. Used for backups or a read replica in another region.</li>
+    <li><strong>Sources:</strong> a stream that pulls in messages from one or more other streams, optionally filtered by subject, and may also capture subjects of its own. Used to aggregate, for example regional streams into a global one.</li>
+  </ul>
+
+  <h3 id="kv">Built on streams: key-value and object stores</h3>
+  <p>A key-value bucket named <code>profiles</code> is a stream named <code>KV_profiles</code> that captures <code>$KV.profiles.&gt;</code>. A put is a publish to <code>$KV.profiles.&lt;key&gt;</code>. A get reads the last message on that subject. History is <code>MaxMsgsPerSubject</code>, and a watch is a consumer. The revision of a key is the stream sequence of the message that set it.</p>
+<pre><code>kv, _ := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "profiles", History: 5})
+kv.Put(ctx, "user.42", []byte(`{"plan":"pro"}`))
+entry, _ := kv.Get(ctx, "user.42")   <span class="c">// entry.Revision() is a stream sequence</span></code></pre>
+  <p>An object store bucket named <code>assets</code> is a stream named <code>OBJ_assets</code> holding chunk messages plus one metadata message per object.</p>
+</section>
+
+<!-- ============ PART 7 ============ -->
+<section id="consumers">
+  <p class="part">Part 7</p>
+  <h2>Consumers</h2>
+
+  <div class="def">
+    <p class="box-label">Definition</p>
+    <p>A consumer is a server-side object attached to exactly one stream. It holds:</p>
+    <ul>
+      <li>a <strong>filter</strong>: which of the stream's subjects it visits (optional);</li>
+      <li>a <strong>starting point</strong>: its <code>DeliverPolicy</code>;</li>
+      <li>a <strong>position</strong>: the next stream sequence to deliver;</li>
+      <li>an <strong>ack state</strong>: which delivered messages still wait for an ack, and how many times each was delivered.</li>
+    </ul>
+    <p>It is a view or cursor over the stream. It is not a subscription, and it is not a subject. It lives on the server whether or not any application is connected to it.</p>
+  </div>
+
+  <h3>Creating billing and analytics</h3>
+<pre><code>billing, _ := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+    Durable:       "billing",
+    FilterSubject: "orders.created",
+    AckPolicy:     jetstream.AckExplicitPolicy,
+})
+
+analytics, _ := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+    Durable:       "analytics",
+    FilterSubject: "orders.&gt;",     <span class="c">// or leave it out: the stream already covers orders.&gt;</span>
+    AckPolicy:     jetstream.AckExplicitPolicy,
+})</code></pre>
+  <p>A filter must fall inside the stream's subjects, so <code>payments.&gt;</code> would be rejected on this stream. From server 2.10, <code>FilterSubjects</code> takes several filters at once.</p>
+
+  <h3 id="reading">How an application reads from a consumer</h3>
+<pre><code><span class="c">// run this in each billing instance; all three share the "billing" consumer</span>
+cc, _ := billing.Consume(func(msg jetstream.Msg) {
+    process(msg.Subject(), msg.Data())   <span class="c">// Subject() is still "orders.created"</span>
+    msg.Ack()
+})
+defer cc.Stop()</code></pre>
+  <p><code>Consume</code> hides the mechanics. Underneath, a <strong>pull consumer</strong> works like this, all on core NATS subjects:</p>
+  <ol class="steps">
+    <li>The client subscribes to its own inbox, such as <code>_INBOX.k3J9</code>.</li>
+    <li>It publishes a pull request to <code>$JS.API.CONSUMER.MSG.NEXT.ORDERS.billing</code>, with the inbox as reply subject and a body like <code>{"batch":10,"expires":30000000000}</code>.</li>
+    <li>The server sends up to 10 messages to the inbox. Each keeps its original subject (<code>orders.created</code>) and carries a reply subject like <code>$JS.ACK.ORDERS.billing.…</code>, which encodes the delivery count and the stream and consumer sequences.</li>
+    <li><code>msg.Ack()</code> publishes to that ack subject. The consumer updates its ack state.</li>
+  </ol>
+  <p>A <strong>push consumer</strong> has a <code>DeliverSubject</code> in its config instead. The server publishes messages to that subject as they become available, and the client reads them with an ordinary core subscription. Setting <code>DeliverGroup</code> makes it a queue group on the deliver subject. Push consumers are the older style. Pull consumers are recommended for new code because the client controls how much it takes.</p>
+
+  <aside class="qa" id="q-js-subjects">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">In JetStream, are subscribers still subscribing to subjects, or to streams?</p>
+    <div class="qa-a">
+      <p>Neither, strictly. An application reads from a consumer, and the consumer belongs to a stream. Subjects still matter in two places: the stream's subject list decides what gets stored, and the consumer's filter decides which stored messages it visits. Messages do still travel to your application over subjects, but those are an inbox or deliver subject owned by the consumer, not <code>orders.created</code>.</p>
+      <p>One trap: the older Go API has <code>js.Subscribe("orders.*", …)</code>, which looks like a subject subscription. Behind the scenes it finds the stream that captures <code>orders.*</code> and creates a consumer on it for you.</p>
+    </div>
+  </aside>
+
+  <h3 id="durable">Durable and ephemeral consumers</h3>
+  <div class="tw free">
+    <table>
+      <thead><tr><th></th><th>Durable</th><th>Ephemeral</th></tr></thead>
+      <tbody>
+        <tr><td>Created with</td><td><code>Durable: "billing"</code></td><td>No <code>Durable</code> (the server picks a name, or you set <code>Name</code> only)</td></tr>
+        <tr><td>Survives restarts</td><td>Yes. It resumes from its saved position.</td><td>No. Deleted after <code>InactiveThreshold</code> with no client attached (5 seconds by default)</td></tr>
+        <tr><td>Shared by instances</td><td>Yes, any number of clients can pull from it</td><td>Normally one client</td></tr>
+        <tr><td>Use for</td><td>Services that must not miss messages</td><td>One-off reads, tailing, replay, debugging</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>"Durable" describes the consumer, not the stream. The stream's messages are stored either way. An <strong>ordered consumer</strong> is a client-library convenience on top of an ephemeral one: no acks, strict order, and it recreates itself if it spots a gap. Use it for replaying a stream in order (<code>js.OrderedConsumer</code> in Go).</p>
+
+  <aside class="qa" id="q-durable">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">In the example, is either "analytics" or "billing" called a durable?</p>
+    <div class="qa-a">
+      <p>Both. Setting <code>Durable: "billing"</code> and <code>Durable: "analytics"</code> is what makes them durable consumers. The server keeps their position and ack state, so when billing restarts it continues where it left off.</p>
+    </div>
+  </aside>
+
+  <h3 id="deliver-policy">Where a new consumer starts</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>DeliverPolicy</th><th>Starts at</th></tr></thead>
+      <tbody>
+        <tr><td><code>DeliverAll</code> (default)</td><td>The oldest message still in the stream</td></tr>
+        <tr><td><code>DeliverNew</code></td><td>Only messages stored after the consumer is created</td></tr>
+        <tr><td><code>DeliverLast</code></td><td>The last message in the stream</td></tr>
+        <tr><td><code>DeliverLastPerSubject</code></td><td>The latest message for each subject, useful for "current state"</td></tr>
+        <tr><td><code>DeliverByStartSequence</code></td><td>A given sequence (<code>OptStartSeq</code>)</td></tr>
+        <tr><td><code>DeliverByStartTime</code></td><td>A given time (<code>OptStartTime</code>)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The policy only applies when a consumer is created. A durable consumer uses it once; after that it resumes from its saved position.</p>
+
+  <aside class="qa" id="q-start">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">If a new ephemeral consumer connects, does it read from the very first message in the stream, or from the newest message onwards?</p>
+    <div class="qa-a">
+      <p>It depends on <code>DeliverPolicy</code>. The default, <code>DeliverAll</code>, starts at the oldest message the stream still holds, which is not necessarily sequence 1 if retention already removed older messages. Use <code>DeliverNew</code> to see only new messages. An ephemeral consumer is new every time, so its policy applies every time.</p>
+    </div>
+  </aside>
+
+  <h3 id="acks">Acks, redelivery and back-pressure</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Call</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>msg.Ack()</code></td><td>Done. It won't be delivered again.</td></tr>
+        <tr><td><code>msg.Nak()</code></td><td>Failed. Redeliver it now, or later with <code>NakWithDelay</code>.</td></tr>
+        <tr><td><code>msg.InProgress()</code></td><td>Still working. Restart the ack timer.</td></tr>
+        <tr><td><code>msg.Term()</code></td><td>Never redeliver this message.</td></tr>
+        <tr><td><code>msg.DoubleAck(ctx)</code></td><td>Ack and wait for the server to confirm it. Used for exactly-once processing.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><code>AckWait</code> (30 seconds by default): a delivered message with no ack after this long is redelivered.</li>
+    <li><code>MaxDeliver</code> (unlimited by default): how many delivery attempts before the consumer gives up on a message. <code>BackOff</code> sets a schedule for redeliveries.</li>
+    <li><code>MaxAckPending</code> (1,000 by default): when this many messages are delivered but not acked, the consumer stops handing out more. This is JetStream's back-pressure.</li>
+  </ul>
+
+  <h3 id="js-fanout">Fan-out and work sharing in JetStream</h3>
+  <p>The two patterns from core NATS map onto consumers:</p>
+  <ul>
+    <li><strong>Fan-out:</strong> one consumer per group. Billing and analytics each get every message their filter matches.</li>
+    <li><strong>Work sharing:</strong> several instances pull from the same consumer. Each message goes to one instance at a time, like a queue group. Instances process in parallel, so processing order across them isn't guaranteed. If order matters, use one instance or <code>MaxAckPending: 1</code>.</li>
+  </ul>
+
+  <aside class="qa" id="q-filters">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">Can the consumer "billing" look only at <code>orders.created</code> while "analytics" looks at <code>orders.&gt;</code>?</p>
+    <div class="qa-a">
+      <p>Yes. Each consumer has its own filter: <code>FilterSubject: "orders.created"</code> for billing and <code>"orders.&gt;"</code> (or none) for analytics. Billing's cursor skips anything that isn't <code>orders.created</code>; analytics sees everything.</p>
+      <p>Watch the retention policy, because these filters overlap. <code>Limits</code> and <code>Interest</code> are fine. A <code>WorkQueue</code> stream rejects this setup, since work-queue streams don't allow consumers with overlapping filters.</p>
+    </div>
+  </aside>
+
+  <aside class="qa" id="q-same-stream">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">But the underlying stream is the same for both, right?</p>
+    <div class="qa-a">
+      <p>Yes. Both consumers sit on the same <code>ORDERS</code> stream, which holds one copy of each message. They are two cursors over it, each with its own filter, position and acks. RabbitMQ is the opposite: there every bound queue gets its own copy.</p>
+    </div>
+  </aside>
+</section>
+
+<!-- ============ PART 8 ============ -->
+<section id="topology">
+  <p class="part">Part 8</p>
+  <h2>Topology: how servers connect</h2>
+  <div class="tw free">
+    <table>
+      <thead><tr><th>Piece</th><th>What it does</th><th>Port by convention</th></tr></thead>
+      <tbody>
+        <tr><td>Client connection</td><td>An application's link to any one server.</td><td class="num">4222</td></tr>
+        <tr><td>Cluster</td><td>Three or more servers in a full mesh of routes. Clients can connect to any of them. Interest is shared, so a message reaches subscribers on every server. Gives high availability.</td><td class="num">6222</td></tr>
+        <tr><td>JetStream in a cluster</td><td>Uses Raft. A meta group tracks which streams and consumers exist, and each replicated stream and consumer has its own Raft group. <code>Replicas: 3</code> survives the loss of one server; <code>Replicas: 5</code> survives two.</td><td>(over routes)</td></tr>
+        <tr><td>Gateway</td><td>Connects whole clusters into a supercluster, for example one cluster per region. Gateways learn which subjects each cluster wants and forward only those.</td><td class="num">7222</td></tr>
+        <tr><td>Leaf node</td><td>A server, or small cluster, that connects into a cluster as an extension, often at an edge site. Local clients keep working locally, and only subjects with interest cross the link. It can run its own JetStream domain.</td><td class="num">7422</td></tr>
+        <tr><td>Monitoring</td><td>HTTP endpoints such as <code>/varz</code>, <code>/connz</code> and <code>/jsz</code>.</td><td class="num">8222</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure class="fig" id="fig-topology">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 300" role="img" aria-label="Two three-server clusters, us-east and eu-west, each a full mesh of routes, joined by a gateway into a supercluster. A leaf node at an edge site connects to one server in us-east.">
+        <!-- us-east -->
+        <rect x="16" y="20" width="300" height="190" rx="14" class="d-area"/>
+        <text x="32" y="44" class="d-cap">CLUSTER us-east</text>
+        <rect x="40" y="70" width="96" height="34" rx="7" class="d-box"/>
+        <text x="88" y="92" class="d-t" text-anchor="middle">server 1</text>
+        <rect x="196" y="70" width="96" height="34" rx="7" class="d-box"/>
+        <text x="244" y="92" class="d-t" text-anchor="middle">server 2</text>
+        <rect x="118" y="156" width="96" height="34" rx="7" class="d-box"/>
+        <text x="166" y="178" class="d-t" text-anchor="middle">server 3</text>
+        <line x1="136" y1="87" x2="196" y2="87" class="d-l"/>
+        <line x1="104" y1="104" x2="146" y2="156" class="d-l"/>
+        <line x1="228" y1="104" x2="186" y2="156" class="d-l"/>
+        <text x="166" y="80" class="d-m" text-anchor="middle">routes</text>
+        <!-- eu-west -->
+        <rect x="444" y="20" width="300" height="190" rx="14" class="d-area"/>
+        <text x="460" y="44" class="d-cap">CLUSTER eu-west</text>
+        <rect x="468" y="70" width="96" height="34" rx="7" class="d-box"/>
+        <text x="516" y="92" class="d-t" text-anchor="middle">server 4</text>
+        <rect x="624" y="70" width="96" height="34" rx="7" class="d-box"/>
+        <text x="672" y="92" class="d-t" text-anchor="middle">server 5</text>
+        <rect x="546" y="156" width="96" height="34" rx="7" class="d-box"/>
+        <text x="594" y="178" class="d-t" text-anchor="middle">server 6</text>
+        <line x1="564" y1="87" x2="624" y2="87" class="d-l"/>
+        <line x1="532" y1="104" x2="574" y2="156" class="d-l"/>
+        <line x1="656" y1="104" x2="614" y2="156" class="d-l"/>
+        <text x="594" y="80" class="d-m" text-anchor="middle">routes</text>
+        <!-- gateway -->
+        <line x1="292" y1="87" x2="468" y2="87" class="d-la"/>
+        <text x="380" y="78" class="d-m" text-anchor="middle">gateway</text>
+        <text x="380" y="122" class="d-t d-sm" text-anchor="middle">supercluster</text>
+        <!-- leaf -->
+        <line x1="166" y1="190" x2="166" y2="248" class="d-la" stroke-dasharray="5 4"/>
+        <text x="178" y="226" class="d-m">leaf connection</text>
+        <rect x="96" y="248" width="140" height="36" rx="7" class="d-hot"/>
+        <text x="166" y="271" class="d-t" text-anchor="middle">leaf node · edge</text>
+      </svg>
+    </div>
+    <figcaption>Routes mesh the servers inside a cluster. A gateway joins whole clusters into a supercluster and forwards only where there is interest. A leaf node hangs off one cluster and extends it to an edge site. (In a real deployment every server in a cluster holds gateway links; one line stands for them here.)</figcaption>
+  </figure>
+</section>
+
+<!-- ============ PART 9 ============ -->
+<section id="security">
+  <p class="part">Part 9</p>
+  <h2>Security and accounts</h2>
+  <p>NATS is multi-tenant. Three entities form the hierarchy, from the top down:</p>
+  <div class="tw free">
+    <table>
+      <thead><tr><th>Entity</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr><td>Operator</td><td>The root of trust in the JWT model. It signs account JWTs, and servers are configured to trust it.</td></tr>
+        <tr><td>Account</td><td>An isolated subject namespace. Two accounts can both use <code>orders.created</code> without seeing each other's messages. Streams, consumers and JetStream limits belong to an account.</td></tr>
+        <tr><td>User</td><td>A credential inside one account, with allow and deny rules for the subjects it may publish and subscribe to.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Authentication can be simple, with users, passwords, tokens or NKeys written into the server config. Or it can be decentralized: operator, account and user JWTs signed with NKeys (Ed25519 keys), managed with the <code>nsc</code> tool, so accounts and users can be added without restarting servers. Every connection type can use TLS. A system account, <code>$SYS</code>, carries server events and monitoring.</p>
+
+  <h3>Sharing between accounts: exports and imports</h3>
+  <p>Accounts see nothing of each other unless one <em>exports</em> subjects and another <em>imports</em> them. There are two kinds:</p>
+  <ul>
+    <li><strong>Stream export/import:</strong> a one-way flow of messages. The orders account exports <code>orders.&gt;</code>, and the analytics account imports it.</li>
+    <li><strong>Service export/import:</strong> request/reply. The importing account can send requests to the exporter's service and get replies back.</li>
+  </ul>
+  <div class="note">
+    <p class="box-label">Gotcha</p>
+    <p>"Stream" in exports and imports means a flow of messages between accounts. It has nothing to do with a JetStream stream.</p>
+  </div>
+</section>
+
+<!-- ============ PART 10 ============ -->
+<section id="summary">
+  <p class="part">Part 10</p>
+  <h2>The model in six lines</h2>
+  <ol class="model">
+    <li>Applications exchange messages addressed by subjects.</li>
+    <li>Core NATS routes each message to the subscriptions that match it at that moment, then forgets it.</li>
+    <li>A queue group makes a set of subscriptions share messages: one member per group gets each one.</li>
+    <li>A stream captures subjects and stores each message once, in order, with a sequence number.</li>
+    <li>A consumer is a cursor over one stream. Applications read and ack through it, and many consumers can share one stream.</li>
+    <li>Routes, gateways and leaf nodes connect servers; accounts keep tenants apart.</li>
+  </ol>
+
+  <h3 id="questions">All questions in this doc</h3>
+  <ol class="qlist">
+    <li><a href="#q-subjects">What do subscribers subscribe to: queues or subjects?</a></li>
+    <li><a href="#q-orders">Can workers, or two groups of workers, listen to <code>orders.*</code>?</a></li>
+    <li><a href="#q-fanout">Is there a queue per group, and is the message duplicated?</a></li>
+    <li><a href="#q-overlap">Do overlapping streams duplicate a message?</a></li>
+    <li><a href="#q-js-subjects">In JetStream, do subscribers subscribe to subjects or streams?</a></li>
+    <li><a href="#q-durable">Are billing and analytics durables?</a></li>
+    <li><a href="#q-start">Where does a new ephemeral consumer start reading?</a></li>
+    <li><a href="#q-filters">Can billing see only <code>orders.created</code> while analytics sees <code>orders.&gt;</code>?</a></li>
+    <li><a href="#q-same-stream">Is the underlying stream the same for both?</a></li>
+  </ol>
+
+  <p class="foot">Defaults and limits are as of NATS server 2.10 and later. Check the server's release notes before relying on a specific default.</p>
+</section>
+
+</main>
+</div>
+
+<script>
+(function(){
+  try{
+    var links=[].slice.call(document.querySelectorAll('.toc a'));
+    var byId={};
+    links.forEach(function(a){byId[a.getAttribute('href').slice(1)]=a;});
+    if(!('IntersectionObserver' in window)) return;
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting && byId[e.target.id]){
+          links.forEach(function(l){l.classList.remove('on');});
+          byId[e.target.id].classList.add('on');
+        }
+      });
+    },{rootMargin:'-15% 0px -75% 0px'});
+    document.querySelectorAll('main > section[id]').forEach(function(s){obs.observe(s);});
+  }catch(e){}
+})();
+</script>
+
+</body></html>
