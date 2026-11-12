@@ -177,7 +177,7 @@ figcaption{font-family:var(--f-display);font-size:14px;line-height:1.5;color:var
 <header class="head">
   <p class="eyebrow">Tech doc · NATS 2.x</p>
   <h1>NATS from the Ground Up</h1>
-  <p class="lede">A tutorial to read from top to bottom. It starts with the entities of core NATS, follows one example (an orders system) through core NATS and then JetStream, and ends with how servers connect and how tenants are kept apart.</p>
+  <p class="lede">A tutorial to read from top to bottom. It starts with the entities of core NATS, follows one example (an orders system) through core NATS and then JetStream, and ends with how several servers work together.</p>
   <dl class="meta">
     <div><dt>Assumes</dt><dd>You know message queues and Kafka</dd></div>
     <div><dt>Code</dt><dd>Go, with <code>nats.go</code> and its <code>jetstream</code> package</dd></div>
@@ -196,8 +196,7 @@ figcaption{font-family:var(--f-display);font-size:14px;line-height:1.5;color:var
     <li><a href="#streams"><span>6</span>Streams</a></li>
     <li><a href="#consumers"><span>7</span>Consumers</a></li>
     <li><a href="#topology"><span>8</span>Topology</a></li>
-    <li><a href="#security"><span>9</span>Security and accounts</a></li>
-    <li><a href="#summary"><span>10</span>The model, and all questions</a></li>
+    <li><a href="#summary"><span>9</span>The model, and all questions</a></li>
   </ol>
 </nav>
 
@@ -222,7 +221,7 @@ figcaption{font-family:var(--f-display);font-size:14px;line-height:1.5;color:var
       <tbody>
         <tr><td>Broker</td><td><code>nats-server</code></td><td>Clustering and replication are built into the one binary. JetStream replicates with its own Raft groups.</td></tr>
         <tr><td>Topic</td><td><strong>Subject</strong> for addressing, <strong>stream</strong> for storage</td><td>Subjects are free-form addresses that are never created. A stream is a log that captures one or more subjects.</td></tr>
-        <tr><td>Partition</td><td>No equivalent</td><td>A stream is one ordered log. Parallel reading comes from many clients sharing one consumer, not from partitions.</td></tr>
+        <tr><td>Partition</td><td>No equivalent</td><td>A stream is one ordered log. Parallel reading comes from many clients sharing one consumer, not from partitions. Messages are handed out in order but can finish out of order (section 7).</td></tr>
         <tr><td>Consumer group with committed offsets</td><td>Durable consumer</td><td>The server tracks acks per message and redelivers the ones that were not acked, like a queue. Kafka tracks one offset per partition.</td></tr>
         <tr><td>Retention by time or size</td><td>Stream limits</td><td>Same idea: <code>MaxAge</code>, <code>MaxBytes</code>, <code>MaxMsgs</code>.</td></tr>
         <tr><td>Log compaction</td><td><code>MaxMsgsPerSubject: 1</code></td><td>Keeps only the latest message per subject. The key-value store is built this way.</td></tr>
@@ -458,12 +457,8 @@ orders.&gt;  →  plain:            [conn 31]</code></pre>
   <h3>The only buffer is per connection</h3>
   <p>Each connection has an outbound buffer, and that is the closest thing to a queue in core NATS. If a subscriber reads too slowly, its buffer grows. Once it passes a limit (<code>max_pending</code>, 64 MB by default), the server marks it a <em>slow consumer</em> and closes the connection. The publisher is never made to wait. Client libraries also keep a pending limit per subscription and drop messages, with a slow-consumer error, when it fills.</p>
 
-  <h3>In a cluster</h3>
-  <ul>
-    <li>Servers share their interest tables with each other over <em>routes</em>.</li>
-    <li>A message crosses a route at most once per remote server, however many subscribers live there. The remote server then does its own local fan-out.</li>
-    <li>For queue groups, the origin server prefers a local member. If it has none, it forwards the message to a server that has members, tagged with the queue groups it is meant for, and that server picks the member.</li>
-  </ul>
+  <h3>With more than one server</h3>
+  <p>All of this happens inside one server. With several servers, a publisher and a subscriber may be connected to different ones. Section 8 shows how the message still gets there.</p>
 </section>
 
 <!-- ============ PART 5 ============ -->
@@ -496,7 +491,7 @@ orders.&gt;  →  plain:            [conn 31]</code></pre>
     <table>
       <thead><tr><th>Entity</th><th>What it is</th></tr></thead>
       <tbody>
-        <tr><td>Stream</td><td>A stored, ordered log of messages. It captures every message published to its subjects, numbers them, and keeps them according to its retention policy. Belongs to one account.</td></tr>
+        <tr><td>Stream</td><td>A stored, ordered log of messages. It captures every message published to its subjects, numbers them, and keeps them according to its retention policy.</td></tr>
         <tr><td>Stream sequence</td><td>A message's position in the stream: 1, 2, 3 and so on. Never reused. Every consumer sees the same sequence for the same message.</td></tr>
         <tr><td>Consumer</td><td>Server-side state attached to exactly one stream: a filter, a starting point, a position, and ack bookkeeping. A view or cursor over the stream. Applications read through it.</td></tr>
         <tr><td>Ack</td><td>The application's confirmation that a delivered message was processed. Until it arrives, the message counts as pending and can be redelivered.</td></tr>
@@ -621,7 +616,7 @@ ack, err = js.Publish(ctx, "orders.created", data, jetstream.WithMsgID("order-10
   <p>When a stream hits a limit, its discard policy decides what happens: <code>DiscardOld</code> (the default) deletes the oldest messages, <code>DiscardNew</code> rejects new publishes.</p>
 
   <h3 id="one-stream">A subject belongs to one stream</h3>
-  <p>Within an account, a subject can be captured by only one stream. Creating a stream whose subjects overlap an existing stream's subjects fails with <code>subjects overlap with an existing stream</code>. So a published message always lands in exactly one stream, or in none.</p>
+  <p>A subject can be captured by only one stream. (Strictly, by one stream per <em>account</em>. Accounts are how NATS isolates tenants from each other; with no accounts configured, every client shares one.) Creating a stream whose subjects overlap an existing stream's subjects fails with <code>subjects overlap with an existing stream</code>. So a published message always lands in exactly one stream, or in none.</p>
 
   <aside class="qa" id="q-overlap">
     <p class="qa-label">Question</p>
@@ -684,13 +679,7 @@ cc, _ := billing.Consume(func(msg jetstream.Msg) {
     msg.Ack()
 })
 defer cc.Stop()</code></pre>
-  <p><code>Consume</code> hides the mechanics. Underneath, a <strong>pull consumer</strong> works like this, all on core NATS subjects:</p>
-  <ol class="steps">
-    <li>The client subscribes to its own inbox, such as <code>_INBOX.k3J9</code>.</li>
-    <li>It publishes a pull request to <code>$JS.API.CONSUMER.MSG.NEXT.ORDERS.billing</code>, with the inbox as reply subject and a body like <code>{"batch":10,"expires":30000000000}</code>.</li>
-    <li>The server sends up to 10 messages to the inbox. Each keeps its original subject (<code>orders.created</code>) and carries a reply subject like <code>$JS.ACK.ORDERS.billing.…</code>, which encodes the delivery count and the stream and consumer sequences.</li>
-    <li><code>msg.Ack()</code> publishes to that ack subject. The consumer updates its ack state.</li>
-  </ol>
+  <p>This is a <strong>pull consumer</strong>: <code>Consume</code> fetches messages from the server in batches, in the background, and calls your handler for each one. Each <code>msg.Ack()</code> is a small message back to the server. All of it travels as ordinary core NATS messages, so JetStream needs no transport of its own.</p>
   <p>A <strong>push consumer</strong> has a <code>DeliverSubject</code> in its config instead. The server publishes messages to that subject as they become available, and the client reads them with an ordinary core subscription. Setting <code>DeliverGroup</code> makes it a queue group on the deliver subject. Push consumers are the older style. Pull consumers are recommended for new code because the client controls how much it takes.</p>
 
   <aside class="qa" id="q-js-subjects">
@@ -771,7 +760,7 @@ defer cc.Stop()</code></pre>
   <p>The two patterns from core NATS map onto consumers:</p>
   <ul>
     <li><strong>Fan-out:</strong> one consumer per group. Billing and analytics each get every message their filter matches.</li>
-    <li><strong>Work sharing:</strong> several instances pull from the same consumer. Each message goes to one instance at a time, like a queue group. Instances process in parallel, so processing order across them isn't guaranteed. If order matters, use one instance or <code>MaxAckPending: 1</code>.</li>
+    <li><strong>Work sharing:</strong> several instances pull from the same consumer. Each message goes to one instance at a time, like a queue group. Instances process in parallel, so messages can finish out of order. The last part of this section explains why, and how to keep strict order.</li>
   </ul>
 
   <aside class="qa" id="q-filters">
@@ -790,19 +779,130 @@ defer cc.Stop()</code></pre>
       <p>Yes. Both consumers sit on the same <code>ORDERS</code> stream, which holds one copy of each message. They are two cursors over it, each with its own filter, position and acks. RabbitMQ is the opposite: there every bound queue gets its own copy.</p>
     </div>
   </aside>
+
+  <h3 id="ordering">Delivered in order, not necessarily processed in order</h3>
+  <p>In Kafka, a consumer group gives each partition to exactly one consumer, which reads it front to back and commits a single offset. Committing offset 42 means "everything before 42 is done". Within a partition, messages are processed in order.</p>
+  <p>A JetStream consumer also hands out messages in stream order. But it tracks acks message by message instead of keeping one offset, so messages can finish in a different order from the one they were stored in:</p>
+  <ul>
+    <li><strong>Batches.</strong> A client pulls several messages at once and can work on them concurrently. Message 7 can be acked while message 5 is still being processed.</li>
+    <li><strong>Several clients on one consumer.</strong> Billing's three instances each hold different messages at the same time and finish them at different speeds.</li>
+    <li><strong>Redelivery.</strong> If message 5 is not acked within <code>AckWait</code>, or is Nak'ed, it is delivered again after 6, 7 and 8 have already gone out, and maybe been acked.</li>
+  </ul>
+  <p>So a consumer's progress is not a single number. The server keeps an <em>ack floor</em>, the sequence up to which every message is acked, plus the messages above it that were delivered but are still waiting for an ack:</p>
+<pre><code>stream sequence   1  2  3  4  5  6  7  8  9  10
+state             a  a  a  a  p  a  a  p  -  -
+
+<span class="c">a = acked    p = delivered, waiting for ack    - = not delivered yet</span>
+ack floor = 4    pending = 5 and 8    next new message = 9</code></pre>
+  <p>When you need strict order:</p>
+  <ul>
+    <li>Set <code>MaxAckPending: 1</code>. The consumer hands out the next message only after the current one is acked, so even a redelivery comes before anything newer. The cost is throughput: one message in flight at a time, across all instances.</li>
+    <li>Use an <strong>ordered consumer</strong> (<code>js.OrderedConsumer</code>) to read or replay a stream in order from one client, without acks.</li>
+    <li>To get order per key together with parallelism, which is what Kafka partitions give you, split the work by subject. For example, give <code>orders.eu.&gt;</code> and <code>orders.us.&gt;</code> their own consumers, each with <code>MaxAckPending: 1</code>.</li>
+  </ul>
+
+  <aside class="qa" id="q-order">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">In Kafka, messages in a partition are consumed in order. Is consumption from a JetStream consumer strictly in order too?</p>
+    <div class="qa-a">
+      <p>Not necessarily. The consumer delivers messages in stream order, but acks are per message, clients pull batches, several clients can share one consumer, and unacked messages are redelivered later. So message 7 can be done while message 5 is still pending, and 5 can come back after 8. If you need strict order, use <code>MaxAckPending: 1</code> or an ordered consumer.</p>
+    </div>
+  </aside>
 </section>
 
 <!-- ============ PART 8 ============ -->
 <section id="topology">
   <p class="part">Part 8</p>
   <h2>Topology: how servers connect</h2>
+  <p>Until now there has been one server. In production you run several, usually three or more, so that losing one machine doesn't stop the system and so that more clients can connect. Several servers bring a problem that one server never had.</p>
+
+  <h3 id="cluster-problem">The problem: publisher and subscriber on different servers</h3>
+  <p>A client connects to one server only, whichever one it reached. In a three-server cluster, the order service may be connected to server A while billing is connected to server B. The order service publishes <code>orders.created</code> to A, but billing's subscription to <code>orders.*</code> was made on B. Section 4 showed that a server delivers a message by looking it up in its interest table. If A knew only about its own clients, it would find no subscriber and drop the message.</p>
+
+  <aside class="qa" id="q-interest">
+    <p class="qa-label">Question</p>
+    <p class="qa-q">A cluster is "a full mesh of routes" where "interest is shared". What does "interest is shared" mean?</p>
+    <div class="qa-a">
+      <p>Interest is the set of subscriptions a server's clients hold: which subject patterns, in which queue groups. Sharing it means each server tells every other server in the cluster about those subscriptions. So when a message is published on A, A already knows that B has a subscriber for it and sends the message there. That is how a message reaches subscribers on any server.</p>
+    </div>
+  </aside>
+
+  <h3 id="routes">The answer: routes and shared interest</h3>
+  <p>The servers in a cluster are linked by <em>routes</em>: one connection between every pair of servers, a full mesh. The routes carry two things, the servers' interest and the messages that need to cross:</p>
+  <ol class="steps">
+    <li>Billing subscribes to <code>orders.*</code> on server B. B adds it to its own interest table and tells A and C: "I have interest in <code>orders.*</code>, queue group billing."</li>
+    <li>A and C add an entry to their tables: <code>orders.*</code> → server B.</li>
+    <li>The order service publishes <code>orders.created</code> to A. A finds B in its table and sends the message over the A–B route, once.</li>
+    <li>B delivers it to its own subscribers, exactly as in section 4. C has no subscriber for <code>orders.*</code>, so it never receives the message.</li>
+  </ol>
+
+  <figure class="fig" id="fig-interest">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 820 310" role="img" aria-label="Three servers in a cluster. Billing subscribes on server B, and B tells server A it has interest in orders.*. The order service publishes orders.created to A, which sends one copy over the route to B, and B delivers it to billing. Server C has no matching subscriber and receives nothing.">
+        <defs>
+          <marker id="m4-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="d-ah"/></marker>
+          <marker id="m4-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="d-aha"/></marker>
+        </defs>
+        <!-- cluster -->
+        <rect x="168" y="20" width="488" height="276" rx="14" class="d-area"/>
+        <text x="184" y="40" class="d-cap">CLUSTER</text>
+        <!-- publisher -->
+        <rect x="16" y="56" width="110" height="58" rx="8" class="d-box"/>
+        <text x="71" y="80" class="d-t" text-anchor="middle">order service</text>
+        <text x="71" y="100" class="d-m" text-anchor="middle">publisher</text>
+        <line x1="126" y1="85" x2="184" y2="85" class="d-l" marker-end="url(#m4-mute)"/>
+        <text x="147" y="76" class="d-m" text-anchor="middle">PUB</text>
+        <!-- server A -->
+        <rect x="186" y="56" width="140" height="58" rx="8" class="d-box"/>
+        <text x="256" y="80" class="d-t d-b" text-anchor="middle">server A</text>
+        <text x="256" y="100" class="d-m" text-anchor="middle">orders.* → B</text>
+        <!-- server B -->
+        <rect x="506" y="56" width="140" height="58" rx="8" class="d-box"/>
+        <text x="576" y="80" class="d-t d-b" text-anchor="middle">server B</text>
+        <text x="576" y="100" class="d-m" text-anchor="middle">orders.* → billing</text>
+        <!-- A-B route: interest one way, the message the other -->
+        <line x1="504" y1="70" x2="328" y2="70" class="d-la" stroke-dasharray="5 4" marker-end="url(#m4-acc)"/>
+        <text x="416" y="61" class="d-t d-sm" text-anchor="middle">1  interest in orders.*</text>
+        <text x="416" y="89" class="d-m" text-anchor="middle">route</text>
+        <line x1="328" y1="100" x2="504" y2="100" class="d-la" marker-end="url(#m4-acc)"/>
+        <text x="416" y="120" class="d-t d-sm" text-anchor="middle">2  one copy of the message</text>
+        <!-- subscriber -->
+        <line x1="646" y1="85" x2="698" y2="85" class="d-la" marker-end="url(#m4-acc)"/>
+        <text x="678" y="76" class="d-m" text-anchor="middle">MSG</text>
+        <rect x="700" y="56" width="104" height="58" rx="8" class="d-hot"/>
+        <text x="752" y="80" class="d-t" text-anchor="middle">billing</text>
+        <text x="752" y="100" class="d-m" text-anchor="middle">subscriber</text>
+        <!-- server C -->
+        <line x1="296" y1="114" x2="386" y2="200" class="d-l"/>
+        <line x1="536" y1="114" x2="446" y2="200" class="d-l"/>
+        <text x="328" y="164" class="d-m" text-anchor="end">route</text>
+        <text x="504" y="164" class="d-m">route</text>
+        <rect x="346" y="200" width="140" height="58" rx="8" class="d-box"/>
+        <text x="416" y="224" class="d-t d-b" text-anchor="middle">server C</text>
+        <text x="416" y="244" class="d-m" text-anchor="middle">no orders.* subs</text>
+        <text x="416" y="282" class="d-t d-sm" text-anchor="middle">gets nothing for orders.created</text>
+      </svg>
+    </div>
+    <figcaption>B tells the other servers what its clients subscribe to (1; C gets the same notice, only the arrow to A is drawn). When the order service publishes to A, A finds B in its table and sends one copy over the route (2). C has no matching subscriber, so nothing is sent to it.</figcaption>
+  </figure>
+
+  <p>A few rules follow from this:</p>
+  <ul>
+    <li>A message crosses a route at most once per remote server, however many subscribers live there. The remote server does its own fan-out.</li>
+    <li>A server never passes on a message that it received from another server in the cluster. That is why every server needs a direct route to every other one: any message reaches any server in one hop.</li>
+    <li>Queue groups still work across servers. The shared interest includes the group name and how many members each server has. The publishing server prefers a member connected to itself. If it has none, it sends the message to a server that has members, and that server picks one.</li>
+    <li>If a client's server goes down, the client reconnects to another server in the cluster and carries on.</li>
+  </ul>
+
+  <h3 id="pieces">All the pieces</h3>
+  <p>The same idea, sending a message only where there is interest, also connects whole clusters:</p>
   <div class="tw free">
     <table>
       <thead><tr><th>Piece</th><th>What it does</th><th>Port by convention</th></tr></thead>
       <tbody>
-        <tr><td>Client connection</td><td>An application's link to any one server.</td><td class="num">4222</td></tr>
-        <tr><td>Cluster</td><td>Three or more servers in a full mesh of routes. Clients can connect to any of them. Interest is shared, so a message reaches subscribers on every server. Gives high availability.</td><td class="num">6222</td></tr>
-        <tr><td>JetStream in a cluster</td><td>Uses Raft. A meta group tracks which streams and consumers exist, and each replicated stream and consumer has its own Raft group. <code>Replicas: 3</code> survives the loss of one server; <code>Replicas: 5</code> survives two.</td><td>(over routes)</td></tr>
+        <tr><td>Client connection</td><td>An application's link to one server.</td><td class="num">4222</td></tr>
+        <tr><td>Route</td><td>Links two servers in the same cluster. Carries shared interest and the messages that need to cross.</td><td class="num">6222</td></tr>
+        <tr><td>JetStream replication</td><td>JetStream keeps <code>Replicas</code> copies of a stream (1 to 5) on different servers. A message counts as stored once a majority of those copies have it, so <code>Replicas: 3</code> keeps working with one server down, and <code>Replicas: 5</code> with two. This uses the Raft consensus algorithm.</td><td>(over routes)</td></tr>
         <tr><td>Gateway</td><td>Connects whole clusters into a supercluster, for example one cluster per region. Gateways learn which subjects each cluster wants and forward only those.</td><td class="num">7222</td></tr>
         <tr><td>Leaf node</td><td>A server, or small cluster, that connects into a cluster as an extension, often at an edge site. Local clients keep working locally, and only subjects with interest cross the link. It can run its own JetStream domain.</td><td class="num">7422</td></tr>
         <tr><td>Monitoring</td><td>HTTP endpoints such as <code>/varz</code>, <code>/connz</code> and <code>/jsz</code>.</td><td class="num">8222</td></tr>
@@ -855,37 +955,8 @@ defer cc.Stop()</code></pre>
 </section>
 
 <!-- ============ PART 9 ============ -->
-<section id="security">
-  <p class="part">Part 9</p>
-  <h2>Security and accounts</h2>
-  <p>NATS is multi-tenant. Three entities form the hierarchy, from the top down:</p>
-  <div class="tw free">
-    <table>
-      <thead><tr><th>Entity</th><th>What it is</th></tr></thead>
-      <tbody>
-        <tr><td>Operator</td><td>The root of trust in the JWT model. It signs account JWTs, and servers are configured to trust it.</td></tr>
-        <tr><td>Account</td><td>An isolated subject namespace. Two accounts can both use <code>orders.created</code> without seeing each other's messages. Streams, consumers and JetStream limits belong to an account.</td></tr>
-        <tr><td>User</td><td>A credential inside one account, with allow and deny rules for the subjects it may publish and subscribe to.</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p>Authentication can be simple, with users, passwords, tokens or NKeys written into the server config. Or it can be decentralized: operator, account and user JWTs signed with NKeys (Ed25519 keys), managed with the <code>nsc</code> tool, so accounts and users can be added without restarting servers. Every connection type can use TLS. A system account, <code>$SYS</code>, carries server events and monitoring.</p>
-
-  <h3>Sharing between accounts: exports and imports</h3>
-  <p>Accounts see nothing of each other unless one <em>exports</em> subjects and another <em>imports</em> them. There are two kinds:</p>
-  <ul>
-    <li><strong>Stream export/import:</strong> a one-way flow of messages. The orders account exports <code>orders.&gt;</code>, and the analytics account imports it.</li>
-    <li><strong>Service export/import:</strong> request/reply. The importing account can send requests to the exporter's service and get replies back.</li>
-  </ul>
-  <div class="note">
-    <p class="box-label">Gotcha</p>
-    <p>"Stream" in exports and imports means a flow of messages between accounts. It has nothing to do with a JetStream stream.</p>
-  </div>
-</section>
-
-<!-- ============ PART 10 ============ -->
 <section id="summary">
-  <p class="part">Part 10</p>
+  <p class="part">Part 9</p>
   <h2>The model in six lines</h2>
   <ol class="model">
     <li>Applications exchange messages addressed by subjects.</li>
@@ -893,7 +964,7 @@ defer cc.Stop()</code></pre>
     <li>A queue group makes a set of subscriptions share messages: one member per group gets each one.</li>
     <li>A stream captures subjects and stores each message once, in order, with a sequence number.</li>
     <li>A consumer is a cursor over one stream. Applications read and ack through it, and many consumers can share one stream.</li>
-    <li>Routes, gateways and leaf nodes connect servers; accounts keep tenants apart.</li>
+    <li>Servers in a cluster share their subscriptions over routes, so a message reaches subscribers on any server. Gateways and leaf nodes extend this across clusters.</li>
   </ol>
 
   <h3 id="questions">All questions in this doc</h3>
@@ -907,6 +978,8 @@ defer cc.Stop()</code></pre>
     <li><a href="#q-start">Where does a new ephemeral consumer start reading?</a></li>
     <li><a href="#q-filters">Can billing see only <code>orders.created</code> while analytics sees <code>orders.&gt;</code>?</a></li>
     <li><a href="#q-same-stream">Is the underlying stream the same for both?</a></li>
+    <li><a href="#q-order">Is consumption strictly in order, as within a Kafka partition?</a></li>
+    <li><a href="#q-interest">What does "interest is shared" mean in a cluster?</a></li>
   </ol>
 
   <p class="foot">Defaults and limits are as of NATS server 2.10 and later. Check the server's release notes before relying on a specific default.</p>
