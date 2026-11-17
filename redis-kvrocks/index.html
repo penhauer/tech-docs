@@ -1,0 +1,807 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Redis and Kvrocks Persistence</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: one reading column (~720px) with a sticky contents rail on wide screens; every table scrolls inside its own frame. */
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --sunk: #edf0f5;
+  --fg: #151a22;
+  --muted: #566074;
+  --line: #dce1e9;
+  --accent: #2a54c8;
+  --accent-soft: #e5ebfb;
+  --ok: #18714a;
+  --ok-soft: #e1f2e8;
+  --warn: #8a5905;
+  --warn-soft: #faeed6;
+  --bad: #ad2d25;
+  --bad-soft: #fae5e3;
+  --f-display: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116;
+    --surface: #161a21;
+    --sunk: #1d222b;
+    --fg: #e5e8ee;
+    --muted: #9ba4b3;
+    --line: #2a313c;
+    --accent: #8aa5ff;
+    --accent-soft: #1f2942;
+    --ok: #62cc93;
+    --ok-soft: #14291e;
+    --warn: #f0bd62;
+    --warn-soft: #2e2414;
+    --bad: #ff8a7f;
+    --bad-soft: #341a1a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1116;
+  --surface: #161a21;
+  --sunk: #1d222b;
+  --fg: #e5e8ee;
+  --muted: #9ba4b3;
+  --line: #2a313c;
+  --accent: #8aa5ff;
+  --accent-soft: #1f2942;
+  --ok: #62cc93;
+  --ok-soft: #14291e;
+  --warn: #f0bd62;
+  --warn-soft: #2e2414;
+  --bad: #ff8a7f;
+  --bad-soft: #341a1a;
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--f-body);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+p, ul, ol, dl, dd, h1, h2, h3 { margin: 0; }
+
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+code {
+  font-family: var(--f-mono);
+  font-size: 0.86em;
+  background: var(--sunk);
+  color: var(--fg);
+  padding: 0.08em 0.36em;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 48px 96px;
+}
+
+/* Hero */
+.hero {
+  max-width: 760px;
+  display: grid;
+  gap: 18px;
+  margin-bottom: 48px;
+}
+.eyebrow, .toc-title, .note-label, .thesis-label, thead th, .card dt, .tag, .timeline .t {
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.eyebrow { color: var(--muted); }
+h1 {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: clamp(2.1rem, 5.2vw, 3.2rem);
+  line-height: 1.06;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.lede {
+  font-size: 1.15rem;
+  color: var(--muted);
+  max-width: 62ch;
+}
+.thesis {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px 22px;
+  display: grid;
+  gap: 12px;
+}
+.thesis-label { color: var(--accent); }
+.thesis ol {
+  padding-left: 1.4em;
+  display: grid;
+  gap: 8px;
+  font-family: var(--f-display);
+  font-size: 1.22rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.thesis ol li::marker { color: var(--accent); font-family: var(--f-mono); font-size: 0.9em; }
+
+/* Layout */
+.layout { display: grid; gap: 40px; }
+.toc { font-size: 14px; display: grid; gap: 10px; }
+.toc-title { color: var(--muted); padding-left: 8px; }
+.toc ol {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  counter-reset: toc;
+}
+.toc li { counter-increment: toc; }
+.toc a {
+  display: grid;
+  grid-template-columns: 1.8em minmax(0, 1fr);
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+  line-height: 1.4;
+}
+.toc a::before {
+  content: counter(toc);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  padding-top: 1px;
+}
+.toc a:hover { background: var(--sunk); color: var(--fg); }
+
+@media (max-width: 999px) {
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px 10px;
+  }
+  .toc ol { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+}
+@media (min-width: 1000px) {
+  .hero { margin-left: 260px; }
+  .layout { grid-template-columns: 220px minmax(0, 1fr); }
+  .toc {
+    position: sticky;
+    top: calc(env(safe-area-inset-top, 0px) + 24px);
+    align-self: start;
+  }
+}
+
+main { max-width: 720px; min-width: 0; display: grid; }
+
+section {
+  display: grid;
+  gap: 16px;
+  padding-block: 44px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 20px;
+  min-width: 0;
+}
+section:first-child { border-top: 0; padding-top: 0; }
+
+h2 {
+  font-family: var(--f-display);
+  font-size: 1.8rem;
+  font-weight: 600;
+  line-height: 1.18;
+  letter-spacing: -0.015em;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  text-wrap: balance;
+}
+h2 .n {
+  font-family: var(--f-mono);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--accent);
+  flex: none;
+}
+h3 {
+  font-family: var(--f-display);
+  font-size: 1.22rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 14px;
+  text-wrap: balance;
+}
+
+.list {
+  padding-left: 1.2em;
+  display: grid;
+  gap: 8px;
+}
+.list li::marker { color: var(--muted); }
+
+/* Callout */
+.note {
+  background: var(--sunk);
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 6px;
+}
+.note-label { color: var(--accent); }
+
+/* Tables */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+thead th {
+  color: var(--muted);
+  background: var(--sunk);
+  white-space: nowrap;
+}
+thead th code { background: transparent; padding: 0; font-size: 1em; text-transform: none; letter-spacing: 0; }
+tbody th { font-weight: 600; }
+table.w600 { min-width: 600px; }
+table.w700 { min-width: 700px; }
+.caption { font-size: 13.5px; color: var(--muted); }
+
+.tag {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  vertical-align: 1px;
+}
+
+.st {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.st.ok { background: var(--ok-soft); color: var(--ok); }
+.st.warn { background: var(--warn-soft); color: var(--warn); }
+.st.bad { background: var(--bad-soft); color: var(--bad); }
+
+.step-n {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5em;
+  height: 1.5em;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+
+/* Cards */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.cards.two { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+.card h3 { margin: 0; font-size: 1.08rem; }
+.card dl { display: grid; gap: 10px; font-size: 14.5px; line-height: 1.5; }
+.card dt { color: var(--muted); margin-bottom: 2px; }
+.card p { font-size: 15px; line-height: 1.55; }
+
+/* Fault chain */
+.chain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+.chain .step {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.chain .step-name {
+  font-family: var(--f-display);
+  font-size: 1.12rem;
+  font-weight: 600;
+}
+.chain .step:last-child .step-name { color: var(--bad); }
+.chain .eg { color: var(--muted); font-size: 13.5px; }
+.chain .arrow {
+  align-self: center;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+}
+@media (max-width: 640px) {
+  .chain { grid-template-columns: minmax(0, 1fr); }
+  .chain .arrow { justify-self: center; transform: rotate(90deg); }
+}
+
+/* Replication timeline */
+.timeline {
+  list-style: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.timeline li {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.timeline li:last-child { border-bottom: 0; }
+.timeline .t { color: var(--muted); padding-top: 3px; }
+.timeline li.risk { background: var(--bad-soft); }
+.timeline li.risk .t { color: var(--bad); }
+
+/* Takeaways */
+.takeaways {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.takeaways li {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 18px;
+}
+
+/* Quiz */
+.quiz { display: grid; gap: 10px; }
+details {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 18px;
+}
+summary {
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1.5;
+}
+summary::marker { color: var(--accent); }
+details[open] summary { margin-bottom: 8px; }
+details p { color: var(--fg); }
+
+.reading { display: grid; gap: 6px; padding-left: 1.2em; }
+
+footer.foot {
+  margin-top: 8px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+</style>
+
+<div class="page">
+  <header class="hero">
+    <p class="eyebrow">Learning notes · Data stores · 16 Nov 2026</p>
+    <h1>Redis and Kvrocks Persistence</h1>
+    <p class="lede">How two Redis-compatible stores keep data, and the specific ways each one can lose it. Each section builds on the one before, so read it top to bottom.</p>
+    <div class="thesis">
+      <p class="thesis-label">Two questions to carry through every section</p>
+      <ol>
+        <li>When the client receives <code>OK</code>, where does the write physically live?</li>
+        <li>Which faults can erase that place?</li>
+      </ol>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Contents">
+      <p class="toc-title">Contents</p>
+      <ol>
+        <li><a href="#systems">Two stores, one protocol</a></li>
+        <li><a href="#crashes">Crashes, faults and failures</a></li>
+        <li><a href="#redis">How Redis persists</a></li>
+        <li><a href="#kvrocks">How Kvrocks persists</a></li>
+        <li><a href="#compare">Side by side</a></li>
+        <li><a href="#replication">Failures fsync can't prevent</a></li>
+        <li><a href="#takeaways">Takeaways</a></li>
+        <li><a href="#quiz">Check yourself</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <!-- 1 -->
+      <section id="systems">
+        <h2><span class="n">1</span>Two stores, one protocol</h2>
+        <p>Redis keeps its whole dataset in RAM. Apache Kvrocks implements the Redis protocol, the format Redis clients use to send commands and read replies. An application that uses a Redis client library can point it at Kvrocks and keep sending the same commands, with no code changes. Underneath, Kvrocks stores data on disk in RocksDB and uses RAM only as a cache. Most differences in this tutorial come from that one design choice.</p>
+        <div class="table-wrap">
+          <table class="w600">
+            <thead><tr><th></th><th>Redis</th><th>Kvrocks</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Where data lives</th><td>RAM, with optional snapshots and logs on disk</td><td>Disk or SSD via RocksDB, with RAM as a cache</td></tr>
+              <tr><th scope="row">Dataset size</th><td>Limited by RAM, so large datasets get expensive</td><td>Limited by disk, so it stays cheap at terabyte scale</td></tr>
+              <tr><th scope="row">Latency</th><td>Sub-millisecond</td><td>Around 1 ms or more, depending on the disk and how often reads hit the cache</td></tr>
+              <tr><th scope="row">Command execution</th><td>One thread (explained below)</td><td>Multiple threads</td></tr>
+              <tr><th scope="row">Redis commands</th><td>The original. Redis defines the commands and the protocol.</td><td>Most Redis commands and data types (strings, hashes, lists, sets, sorted sets, streams) work the same way. Some commands are missing or behave differently, so check the <a href="https://kvrocks.apache.org/docs/supported-commands/">supported-commands list</a> for the ones your application uses.</td></tr>            </tbody>
+          </table>
+        </div>
+        <p>Redis suits hot, latency-critical data that fits in memory, such as caches, sessions, rate limiters and leaderboards. Kvrocks suits large datasets where you want the Redis API without paying for all that RAM and can accept a little more latency.</p>
+
+        <h3>What "single-threaded" means in Redis</h3>
+        <p>Redis runs its own event loop, a small library called <code>ae</code> on top of epoll or kqueue. One thread waits for sockets to become ready, reads requests, runs commands and writes replies. It is the same reactor model as Python's asyncio, and it lets one thread serve thousands of connections.</p>
+        <p>The difference from asyncio is that a Redis command never pauses partway through. An asyncio coroutine can yield at any <code>await</code>. A Redis command runs to completion before the next one starts. That makes every command atomic without locks. It also means one slow command, such as <code>KEYS *</code> or a heavy Lua script, blocks every client.</p>
+        <p>Some work does run outside the main thread:</p>
+        <ul class="list">
+          <li><strong>I/O threads</strong> (Redis 6.0+) read and parse requests and write replies. Commands still execute on the main thread.</li>
+          <li><strong>Background threads</strong> free large values (<code>UNLINK</code>), run <code>fsync</code> for the AOF, and close files.</li>
+          <li><strong>Forked child processes</strong> write RDB snapshots and rewrite the AOF.</li>
+        </ul>
+        <div class="note">
+          <p class="note-label">Why this matters for persistence</p>
+          <p>Snapshots and log rewrites happen in a forked child, so saving to disk doesn't stall the event loop. The price is the fork itself. On a large dataset it can cause a short pause and use extra memory while the child runs.</p>
+        </div>
+      </section>
+
+      <!-- 2 -->
+      <section id="crashes">
+        <h2><span class="n">2</span>Crashes, faults and failures</h2>
+        <p>"Crash" covers three different events, and each one erases a different amount of state. Say which one you mean whenever durability comes up.</p>
+        <p>What each crash erases depends on two system calls that servers use to save data:</p>
+        <ul class="list">
+          <li><code>write()</code> copies bytes from the program's memory into the <strong>OS page cache</strong>, a buffer in the kernel's memory, and usually returns quickly. The kernel writes cached bytes to disk later, on its own schedule. Once <code>write()</code> returns, the kernel holds those bytes, independent of the program.</li>
+          <li><code>fsync()</code> tells the kernel to send a file's cached bytes to the disk now. It returns only after the disk confirms they are stored, which is why it is slow.</li>
+        </ul>
+        <div class="cards">
+          <article class="card">
+            <h3>Process crash</h3>
+            <dl>
+              <div><dt>Examples</dt><dd>Segfault, OOM kill, <code>kill -9</code>, container restart</dd></div>
+              <div><dt>Survives</dt><dd>Anything already handed to the OS. The OS keeps running and still writes it to disk.</dd></div>
+              <div><dt>Lost</dt><dd>Data that existed only in the process's own memory.</dd></div>
+            </dl>
+          </article>
+          <article class="card">
+            <h3>Machine crash</h3>
+            <dl>
+              <div><dt>Examples</dt><dd>Power loss, kernel panic, VM or host failure</dd></div>
+              <div><dt>Survives</dt><dd>Only data already forced to disk with <code>fsync</code>.</dd></div>
+              <div><dt>Lost</dt><dd>The OS's memory buffer too, so data written but not yet synced is gone.</dd></div>
+            </dl>
+          </article>
+          <article class="card">
+            <h3>Disk loss</h3>
+            <dl>
+              <div><dt>Examples</dt><dd>A dead disk, a cloud instance whose local storage is wiped</dd></div>
+              <div><dt>Survives</dt><dd>Only copies on another machine, from replication or backups.</dd></div>
+              <div><dt>Lost</dt><dd>Everything on that disk, including data that was synced.</dd></div>
+            </dl>
+          </article>
+        </div>
+
+        <h3>Faults and failures</h3>
+        <p>Each of these crashes is a <strong>fault</strong>. Dependability engineering describes what can follow as a chain of three steps.</p>
+        <div class="chain">
+          <div class="step">
+            <p class="step-name">Fault</p>
+            <p>The underlying cause.</p>
+            <p class="eg">A process crash, a machine crash, a dead disk.</p>
+          </div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="step">
+            <p class="step-name">Error</p>
+            <p>The wrong internal state the fault leaves behind.</p>
+            <p class="eg">A restarted node missing a write it acknowledged.</p>
+          </div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="step">
+            <p class="step-name">Failure</p>
+            <p>A client visibly gets wrong service.</p>
+            <p class="eg">A write the client saw succeed is gone.</p>
+          </div>
+        </div>
+        <p><strong>Fault tolerance</strong> stops the chain before it reaches a failure. In this tutorial that means logs, <code>fsync</code> and replication. Every durability setting from here on decides which faults a store tolerates and which ones become failures. One unhandled fault is enough to cause a failure.</p>
+        <div class="note">
+          <p class="note-label">The words depend on the level you look from</p>
+          <p>One component's failure is a fault for the system that contains it. A dead disk is a failure from the disk's point of view and a fault from the database's. If a replica takes over, the database has no failure. If nothing takes over and data is lost, the database itself has failed.</p>
+        </div>
+
+        <h3>Where a write can live</h3>
+        <p>On its way to safety, a write passes through up to four places. Each step takes more time and tolerates more faults. Every durability setting in this tutorial is really a choice about how far down this ladder a write gets before the client hears <code>OK</code>.</p>
+        <div class="table-wrap">
+          <table class="w600">
+            <thead><tr><th>Place</th><th>How a write gets there</th><th>Process crash</th><th>Machine crash</th><th>Disk loss</th></tr></thead>
+            <tbody>
+              <tr>
+                <th scope="row"><span class="step-n">1</span>Process memory</th>
+                <td>The server applies the command</td>
+                <td><span class="st bad">✕ Lost</span></td>
+                <td><span class="st bad">✕ Lost</span></td>
+                <td><span class="st bad">✕ Lost</span></td>
+              </tr>
+              <tr>
+                <th scope="row"><span class="step-n">2</span>OS page cache</th>
+                <td><code>write()</code> system call</td>
+                <td><span class="st ok">✓ Survives</span></td>
+                <td><span class="st bad">✕ Lost</span></td>
+                <td><span class="st bad">✕ Lost</span></td>
+              </tr>
+              <tr>
+                <th scope="row"><span class="step-n">3</span>Local disk</th>
+                <td><code>fsync()</code> system call</td>
+                <td><span class="st ok">✓ Survives</span></td>
+                <td><span class="st ok">✓ Survives</span></td>
+                <td><span class="st bad">✕ Lost</span></td>
+              </tr>
+              <tr>
+                <th scope="row"><span class="step-n">4</span>Another machine</th>
+                <td>Replication or backup</td>
+                <td><span class="st ok">✓ Survives</span></td>
+                <td><span class="st ok">✓ Survives</span></td>
+                <td><span class="st ok">✓ Survives</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="caption">Read across a row to see which faults a write survives once it reaches that place. A "Lost" cell means that fault becomes a failure.</p>
+      </section>
+
+      <!-- 3 -->
+      <section id="redis">
+        <h2><span class="n">3</span>How Redis persists</h2>
+        <p>Redis data lives in RAM, place 1 on the ladder. Two optional mechanisms copy it further down: RDB snapshots and the AOF log. You can use either, both or neither.</p>
+
+        <h3>RDB: periodic snapshots</h3>
+        <ul class="list">
+          <li>Writes the whole dataset to a compact binary file. It runs on a schedule, such as <code>save 300 100</code> (every 5 minutes if at least 100 keys changed), or on demand with <code>SAVE</code> or <code>BGSAVE</code>.</li>
+          <li>A forked child writes the file, so the main thread keeps serving clients.</li>
+          <li><strong>Strengths:</strong> small files, fast restarts, easy backups and copies.</li>
+          <li><strong>Weakness:</strong> any fault, even a process crash, loses every write since the last snapshot.</li>
+        </ul>
+
+        <h3>AOF: a log of every write</h3>
+        <ul class="list">
+          <li>Appends each write command (<code>SET</code>, <code>INCR</code> and so on) to a file. On restart, Redis replays the file to rebuild the data.</li>
+          <li>Redis hands each log entry to the OS before sending the reply, so an acknowledged write has reached place 2. The <code>appendfsync</code> setting controls how soon it reaches place 3.</li>
+        </ul>
+        <div class="table-wrap">
+          <table class="w600">
+            <thead><tr><th><code>appendfsync</code></th><th>When Redis calls fsync</th><th>Lost in a machine crash</th><th>Speed</th></tr></thead>
+            <tbody>
+              <tr>
+                <th scope="row"><code>always</code></th>
+                <td>Before replying to each write</td>
+                <td><span class="st ok">✓ Nothing</span></td>
+                <td>Slowest</td>
+              </tr>
+              <tr>
+                <th scope="row"><code>everysec</code><span class="tag">default</span></th>
+                <td>Once per second, in a background thread</td>
+                <td><span class="st warn">! About the last second</span></td>
+                <td>Fast</td>
+              </tr>
+              <tr>
+                <th scope="row"><code>no</code></th>
+                <td>Never; the OS flushes on its own schedule</td>
+                <td><span class="st bad">✕ Up to about 30 s on default Linux settings</span></td>
+                <td>Fastest</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ul class="list">
+          <li>The log grows forever, so Redis periodically <strong>rewrites</strong> it into the shortest set of commands that recreates the current state. A forked child does this too.</li>
+          <li><strong>Strength:</strong> much better durability than snapshots alone. <strong>Weakness:</strong> bigger files and slower restarts.</li>
+        </ul>
+
+        <h3>Defaults and combinations</h3>
+        <ul class="list">
+          <li>Out of the box, Redis has RDB snapshots on and AOF off.</li>
+          <li>You can enable both. Since Redis 4, an AOF rewrite can start the file with an RDB snapshot and append commands after it (<code>aof-use-rdb-preamble</code>). Restarts stay fast, and a crash loses at most about a second.</li>
+          <li>For a pure cache, people often turn both off.</li>
+        </ul>
+      </section>
+
+      <!-- 4 -->
+      <section id="kvrocks">
+        <h2><span class="n">4</span>How Kvrocks persists</h2>
+        <p>Kvrocks has no RDB or AOF. Its data already lives on disk in RocksDB, and RocksDB protects recent writes with a <strong>write-ahead log (WAL)</strong>. Like the AOF in Redis, the WAL is the fault tolerance that keeps a process crash from becoming a failure.</p>
+        <ul class="list">
+          <li>Each write is appended to the WAL and handed to the OS before Kvrocks replies, which puts it in place 2. A process crash loses nothing that was acknowledged.</li>
+          <li>By default Kvrocks doesn't wait for <code>fsync</code>. A machine crash can lose recent writes still sitting in the OS page cache.</li>
+          <li>Setting <code>rocksdb.write_options.sync yes</code> makes every write wait for <code>fsync</code>, which puts it in place 3, at a cost in throughput.</li>
+          <li>Restarts are fast because the data is already on disk. Redis has to load its whole dataset into RAM before it can serve.</li>
+        </ul>
+        <div class="note">
+          <p class="note-label">Matching settings</p>
+          <p>Kvrocks defaults are closest to Redis with <code>appendfsync no</code>. A process crash is safe, and the OS decides when the log reaches disk. Kvrocks with <code>sync yes</code> matches Redis with <code>appendfsync always</code>.</p>
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section id="compare">
+        <h2><span class="n">5</span>Side by side</h2>
+        <p>This table answers the two opening questions for the common setups of each store. The last three columns are faults. A red or amber cell means that fault becomes a failure, because writes a client saw succeed are gone.</p>
+        <div class="table-wrap">
+          <table class="w700">
+            <thead><tr><th>Setup</th><th>Write is in, at <code>OK</code></th><th>Lost in a process crash</th><th>Lost in a machine crash</th><th>Lost with the disk</th></tr></thead>
+            <tbody>
+              <tr>
+                <th scope="row">Redis, RDB only<span class="tag">default</span></th>
+                <td>Process memory</td>
+                <td><span class="st bad">✕ Writes since the last snapshot</span></td>
+                <td><span class="st bad">✕ Writes since the last snapshot</span></td>
+                <td><span class="st bad">✕ Everything not copied off the machine</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Redis, AOF <code>everysec</code></th>
+                <td>OS page cache</td>
+                <td><span class="st ok">✓ Almost nothing*</span></td>
+                <td><span class="st warn">! About the last second</span></td>
+                <td><span class="st bad">✕ Everything not replicated</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Redis, AOF <code>always</code></th>
+                <td>Local disk</td>
+                <td><span class="st ok">✓ Nothing</span></td>
+                <td><span class="st ok">✓ Nothing</span></td>
+                <td><span class="st bad">✕ Everything not replicated</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Kvrocks<span class="tag">default</span></th>
+                <td>OS page cache</td>
+                <td><span class="st ok">✓ Nothing</span></td>
+                <td><span class="st warn">! Recent writes the OS hadn't flushed</span></td>
+                <td><span class="st bad">✕ Everything not replicated</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Kvrocks, <code>sync yes</code></th>
+                <td>Local disk</td>
+                <td><span class="st ok">✓ Nothing</span></td>
+                <td><span class="st ok">✓ Nothing</span></td>
+                <td><span class="st bad">✕ Everything not replicated</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="caption">* If a background fsync is slow, Redis can hold the log in its own memory for up to two seconds before writing it to the OS.</p>
+        <p>The biggest difference is the default. Out of the box, Kvrocks tolerates a process crash that would cost a default Redis every write since its last snapshot. Once both use the same fsync policy, they protect a single machine about equally well. Kvrocks still restarts faster, because it doesn't have to load the dataset into RAM.</p>
+      </section>
+
+      <!-- 6 -->
+      <section id="replication">
+        <h2><span class="n">6</span>Failures fsync can't prevent</h2>
+        <p>Everything above concerns faults on one machine. Surviving disk loss needs place 4, a copy on another machine. Both stores get there with <strong>asynchronous replication</strong>: the primary replies <code>OK</code> first and sends the write to replicas afterward.</p>
+        <ol class="timeline" aria-label="Timeline of an asynchronously replicated write">
+          <li><span class="t">t0</span><span>The client sends <code>SET order:42 paid</code> to the primary.</span></li>
+          <li><span class="t">t1</span><span>The primary applies it and replies <code>OK</code>. The client now treats the write as done.</span></li>
+          <li class="risk"><span class="t">Window</span><span>The write exists only on the primary. If the primary dies now and a replica is promoted, the write is gone, even though the client saw <code>OK</code>. The primary's crash is the fault, and the missing write is the failure.</span></li>
+          <li><span class="t">t2</span><span>The replica receives the write. From here on, a failover keeps it.</span></li>
+        </ol>
+        <ul class="list">
+          <li><strong>Failover.</strong> When a replica is promoted, acknowledged writes it hadn't received are lost. Both stores have this gap. In Redis, <code>WAIT numreplicas timeout</code> makes a client block until that many replicas confirm a write, which narrows the gap without fully closing it.</li>
+          <li><strong>Network partition.</strong> A primary cut off from the rest of the cluster can keep accepting writes for a short time. Those writes are discarded when it rejoins. How long this lasts depends on the failover manager: Sentinel or Redis Cluster for Redis, kvrocks-controller for Kvrocks.</li>
+          <li><strong>Memory full.</strong> Eviction isn't a fault. Redis is working as configured, and clients still lose data. With <code>maxmemory</code> and a policy like <code>allkeys-lru</code>, Redis deletes keys to make room. Kvrocks doesn't evict, since RAM is only its cache. When it reaches its disk limit (<code>max-db-size</code>), new writes fail instead.</li>
+        </ul>
+        <div class="note">
+          <p class="note-label">Rule of thumb</p>
+          <p>Use either store for data you can rebuild or can afford to lose a little of, such as caches, sessions, counters and queues with retries. Keep the source of truth in a database built for durability. If you need Redis-style access with strong durability, look at a service such as AWS MemoryDB, which writes each change to a replicated transaction log before acknowledging it.</p>
+        </div>
+      </section>
+
+      <!-- 7 -->
+      <section id="takeaways">
+        <h2><span class="n">7</span>Takeaways</h2>
+        <ul class="takeaways">
+          <li><strong>Ask two questions.</strong> Where is the write when the client hears <code>OK</code>, and which faults erase that place?</li>
+          <li><strong>Separate faults from failures.</strong> Crashes are faults, and they will happen. A failure is a client seeing lost or wrong data. Every setting in this tutorial decides which faults become failures.</li>
+          <li><strong>Name the fault.</strong> A process crash, a machine crash and disk loss each erase a different amount. <code>write()</code> protects against the first, <code>fsync()</code> against the second, and only another machine against the third.</li>
+          <li><strong>Defaults differ most.</strong> Default Redis loses every write since the last snapshot, even in a process crash. Default Kvrocks loses nothing in a process crash.</li>
+          <li><strong>Matched settings land in the same place.</strong> With the same fsync policy, both stores protect one machine about equally well. Kvrocks restarts faster.</li>
+          <li><strong>Replication is asynchronous in both.</strong> A failover can lose writes that clients saw succeed. Keep the source of truth in a database built for durability.</li>
+        </ul>
+      </section>
+
+      <!-- 8 -->
+      <section id="quiz">
+        <h2><span class="n">8</span>Check yourself</h2>
+        <p>Try each one before opening the answer.</p>
+        <div class="quiz">
+          <details>
+            <summary>A Redis server with default settings is killed by the OOM killer. What is lost?</summary>
+            <p>Every write since the last RDB snapshot. The default has AOF off, so recent writes existed only in Redis's memory, and a process crash is enough to lose them.</p>
+          </details>
+          <details>
+            <summary>A Kvrocks server with default settings gets <code>kill -9</code>. Later, a different Kvrocks machine loses power. What does each lose?</summary>
+            <p>The killed process loses nothing it acknowledged, because the WAL entries were already handed to the OS. The power loss can lose recent writes the OS hadn't flushed to disk, unless <code>rocksdb.write_options.sync</code> is <code>yes</code>.</p>
+          </details>
+          <details>
+            <summary>A single Redis node runs with <code>appendfsync always</code> and no replicas. Its disk dies. What survives?</summary>
+            <p>Nothing from that machine. <code>fsync</code> protects against a machine crash, but not against losing the disk itself. Only a replica or a backup on another machine would survive.</p>
+          </details>
+          <details>
+            <summary>A primary dies, and a replica that had received every acknowledged write is promoted. Did the fault cause a failure?</summary>
+            <p>Not a data-loss failure. Every write a client saw succeed is still there, so replication tolerated the fault. Clients can still get errors during the seconds the failover takes, which is a short availability failure. From the primary node's own point of view, it simply failed.</p>
+          </details>
+        </div>
+      </section>
+
+      <!-- Reading -->
+      <section id="reading">
+        <h2>Further reading</h2>
+        <ul class="reading">
+          <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/">Redis persistence documentation</a></li>
+          <li><a href="https://github.com/apache/kvrocks/blob/unstable/kvrocks.conf">Kvrocks default configuration file (<code>kvrocks.conf</code>)</a></li>
+          <li><a href="https://kvrocks.apache.org/docs/supported-commands/">Kvrocks supported commands</a></li>
+          <li>Avižienis, Laprie, Randell and Landwehr, "Basic Concepts and Taxonomy of Dependable and Secure Computing" (2004), the source of the fault, error and failure terms</li>
+        </ul>
+        <footer class="foot">Written from a learning session on 16 Nov 2026.</footer>
+      </section>
+    </main>
+  </div>
+</div>
+
+</body></html>

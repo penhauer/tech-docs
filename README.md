@@ -5,5 +5,6 @@ Tutorials and notes, published with GitHub Pages at https://penhauer.github.io/t
 | Doc | Page |
 | --- | --- |
 | NATS from the Ground Up | [penhauer.github.io/tech-docs/nats/](https://penhauer.github.io/tech-docs/nats/) |
+| Redis and Kvrocks Persistence | [penhauer.github.io/tech-docs/redis-kvrocks/](https://penhauer.github.io/tech-docs/redis-kvrocks/) |
 
 Each doc is a self-contained HTML page in its own folder (`<topic>/index.html`).
